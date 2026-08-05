@@ -3255,6 +3255,7 @@ mod tests {
 
     fn one_comment(app: &mut App) {
         app.store.add(Comment {
+            id: 0,
             file: "src/lib.rs".to_string(),
             side: Side::New,
             start: 1,

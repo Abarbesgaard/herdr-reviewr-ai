@@ -83,6 +83,7 @@ pub fn to_comment(c: InboxComment) -> Option<Comment> {
         _ => return None,
     };
     Some(Comment {
+        id: 0,
         file: c.file,
         side,
         start: c.start,

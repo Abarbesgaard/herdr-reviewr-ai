@@ -85,6 +85,11 @@ pub enum Side {
 /// A reviewer comment anchored to a run of diff lines, carrying the snippet.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Comment {
+    /// A stable per-store id, stamped on [`CommentStore::add`]. It survives edits and the
+    /// shifting of neighbours, so an out-of-process agent handed this id in an address prompt
+    /// can name exactly this comment back to `resolve-herdr` however long the fix takes. The
+    /// literal `0` on a freshly built comment is a placeholder the store overwrites.
+    pub id: u64,
     pub file: String,
     pub side: Side,
     pub start: u32,
@@ -116,6 +121,9 @@ impl Comment {
 #[derive(Default, Debug)]
 pub struct CommentStore {
     items: Vec<Comment>,
+    /// The last id stamped; the next `add` uses `next_id + 1`, so ids start at 1 and never
+    /// repeat within a session — a resolve can't clear the wrong comment by id reuse.
+    next_id: u64,
 }
 
 impl CommentStore {
@@ -139,8 +147,10 @@ impl CommentStore {
         self.items.get(index)
     }
 
-    /// Append a comment; returns its index.
-    pub fn add(&mut self, comment: Comment) -> usize {
+    /// Append a comment, stamping it with the next session id; returns its index.
+    pub fn add(&mut self, mut comment: Comment) -> usize {
+        self.next_id += 1;
+        comment.id = self.next_id;
         self.items.push(comment);
         self.items.len() - 1
     }
@@ -164,6 +174,15 @@ impl CommentStore {
     pub fn take_all(&mut self) -> Vec<Comment> {
         std::mem::take(&mut self.items)
     }
+
+    /// Drop every comment whose id is in `ids` (an agent- or reviewer-driven resolve); returns
+    /// how many were removed. An id with no live comment — already gone, or never here — is a
+    /// silent no-op, so a duplicate or stale resolve is harmless.
+    pub fn resolve(&mut self, ids: &std::collections::HashSet<u64>) -> usize {
+        let before = self.items.len();
+        self.items.retain(|c| !ids.contains(&c.id));
+        before - self.items.len()
+    }
 }
 
 #[cfg(test)]
@@ -172,6 +191,7 @@ mod tests {
 
     fn comment(file: &str, start: u32, end: u32, text: &str) -> Comment {
         Comment {
+            id: 0,
             file: file.into(),
             side: Side::New,
             start,
@@ -225,5 +245,20 @@ mod tests {
         assert_eq!(rest.len(), 1);
         assert!(s.is_empty());
         assert!(s.take(0).is_none());
+    }
+
+    #[test]
+    fn add_stamps_rising_ids_and_resolve_drops_by_id() {
+        let mut s = CommentStore::new();
+        s.add(comment("a.rs", 1, 1, "one"));
+        s.add(comment("b.rs", 2, 2, "two"));
+        s.add(comment("c.rs", 3, 3, "three"));
+        let ids: Vec<u64> = s.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![1, 2, 3], "ids start at 1 and rise, so none collides");
+
+        let want: std::collections::HashSet<u64> = [2, 42].into_iter().collect();
+        assert_eq!(s.resolve(&want), 1, "only the live id resolves; the stranger is ignored");
+        let left: Vec<u64> = s.iter().map(|c| c.id).collect();
+        assert_eq!(left, vec![1, 3], "the resolved comment is dropped, the rest keep their ids");
     }
 }

@@ -2648,6 +2648,7 @@ fn changed_count_and_staleness_stay_scope_based_on_all_files() {
 
     // A diff comment on b.rs, which is in the worktree but not in the changeset.
     let comment = Comment {
+        id: 0,
         file: "b.rs".into(),
         side: Side::New,
         start: 1,

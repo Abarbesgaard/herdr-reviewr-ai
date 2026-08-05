@@ -497,10 +497,11 @@ pub struct App {
     /// The mode the picker opened over — `Normal`, the comments list, or the find band —
     /// so closing it restores the view the reviewer sent from (`specs/input.md`).
     pub picker_over: Mode,
-    /// A single comment's address prompt held while the picker chooses which agent it goes to,
-    /// with the store index to consume on delivery. `None` means a picked send exports the whole
-    /// store instead (`specs/ai-review.md`).
-    pub pending_address: Option<(usize, String)>,
+    /// A single comment's address prompt held while the picker chooses which agent it goes to.
+    /// The prompt already carries the comment's id (so the agent can resolve it later), so no
+    /// index is kept — addressing never consumes the comment. `None` means a picked send exports
+    /// the whole store instead (`specs/ai-review.md`).
+    pub pending_address: Option<String>,
     /// The agent this session last sent to, which arms the picker's highlight. Only a
     /// successful send sets it (`specs/herdr-host.md`).
     pub last_sent_pane: Option<String>,
@@ -2773,6 +2774,24 @@ impl App {
         added
     }
 
+    /// Drop every comment named by a resolve set (`resolve-herdr`, or a future reviewer key),
+    /// returning how many left. Ids with no live comment are ignored, so a stale or duplicate
+    /// resolve is harmless. An emptied rail hands focus back to the diff, as a delete does.
+    pub fn resolve_ai_comments(&mut self, ids: Vec<u64>) -> usize {
+        let set: std::collections::HashSet<u64> = ids.into_iter().collect();
+        let removed = self.store.resolve(&set);
+        if removed > 0 {
+            self.clamp_list_cursor();
+            if self.store.is_empty() {
+                self.close_list();
+            }
+            if self.focus == Focus::Comments && !self.comments_rail_visible() {
+                self.focus = Focus::Diff;
+            }
+        }
+        removed
+    }
+
     fn build_comment(&self, text: String) -> Option<Comment> {
         // Anchor to the file the open diff belongs to (`diff_path`), not the file-list
         // selection — they diverge if the list shifts under a comment in progress.
@@ -2781,7 +2800,7 @@ impl App {
         // The File view marks every comment as content-anchored, so it ages by file existence,
         // not changeset membership (specs/review-model.md).
         let diff_anchored = self.diff.view == View::Diff;
-        Some(Comment { file, side, start, end, lines, text, diff_anchored })
+        Some(Comment { id: 0, file, side, start, end, lines, text, diff_anchored })
     }
 
     /// The `path:line` the composer is anchored to (selection for a new comment,
@@ -2794,6 +2813,7 @@ impl App {
                 let (side, start, end, _) = self.selection_anchor()?;
                 // Only `location()` is read here, which ignores `diff_anchored`.
                 let c = Comment {
+                    id: 0,
                     file,
                     side,
                     start,
@@ -3547,34 +3567,27 @@ impl App {
         let Some(c) = self.store.get(index) else { return };
         let text = address_prompt(c);
         match herdr::send_target() {
-            Ok(SendTarget::One(agent)) => self.deliver_address(&agent, index, &text),
+            Ok(SendTarget::One(agent)) => self.deliver_address(&agent, &text),
             Ok(SendTarget::Many(rows)) => {
-                self.pending_address = Some((index, text));
+                self.pending_address = Some(text);
                 self.open_picker(rows);
             }
             Err(e) => self.status = e.to_string(),
         }
     }
 
-    /// Deliver an address prompt to one decided pane and consume its comment only on success,
-    /// mirroring [`Self::export`] for the single-comment case. A closed pane fails here and
-    /// keeps the comment. An emptied rail hands focus back to the diff.
-    fn deliver_address(&mut self, agent: &AgentChoice, index: usize, text: &str) {
+    /// Draft an address prompt into one decided pane and focus it, WITHOUT submitting and
+    /// WITHOUT consuming the comment: addressing only starts the fix, so the finding stays on
+    /// the reviewer's checklist until a resolve (`resolve-herdr`, or the agent) clears it
+    /// (`specs/ai-review.md`). A closed pane reports and changes nothing.
+    fn deliver_address(&mut self, agent: &AgentChoice, text: &str) {
         let target = Agent { pane: agent.pane_id.clone(), name: agent.name.clone() };
         if target.export(text).is_err() {
             self.status = "agent not found".to_string();
             return;
         }
         self.last_sent_pane = Some(agent.pane_id.clone());
-        self.store.take(index);
-        self.clamp_list_cursor();
         self.status = format!("addressing on {}", agent.name);
-        if self.store.is_empty() {
-            self.close_list();
-        }
-        if self.focus == Focus::Comments && !self.comments_rail_visible() {
-            self.focus = Focus::Diff;
-        }
     }
 
     /// `Send`: one agent goes straight out, several open the picker, none refuses and names
@@ -3646,7 +3659,7 @@ impl App {
         let address = self.pending_address.take();
         self.close_picker();
         match address {
-            Some((index, text)) => self.deliver_address(&agent, index, &text),
+            Some(text) => self.deliver_address(&agent, &text),
             None => self.export_to_agent(&agent),
         }
     }
@@ -3864,14 +3877,20 @@ fn line_in(c: &Comment, row: &Row) -> bool {
 }
 
 /// The prompt an `address` fills into the agent pane: the file as an `@`-mention so the agent
-/// resolves it, then the comment's line and text as the thing to fix. It ends with a blank
-/// line so the reviewer's cursor lands under it, ready to add an instruction before sending
-/// (`specs/ai-review.md`). The mention is the bare path; the line goes in the prose after the
-/// space that ends the mention, so a `path:line` suffix never breaks it.
+/// resolves it, the comment's line and text as the thing to fix, and a closing line telling the
+/// agent how to mark it resolved once fixed — `resolve-herdr <id>` — which clears it from the
+/// pane. Addressing never removes the comment itself (`specs/ai-review.md`); the resolve does.
+/// The blank line before the instruction parks the reviewer's cursor under the ask so they can
+/// add their own words first. The mention is the bare path; the line goes in the prose after
+/// the space that ends it, so a `path:line` suffix never breaks it.
 fn address_prompt(c: &Comment) -> String {
     let line =
         if c.start == c.end { c.start.to_string() } else { format!("{}-{}", c.start, c.end) };
-    format!("@{} (line {line}): {}\n\n", c.file, c.text)
+    format!(
+        "@{} (line {line}): {}\n\nWhen this is fixed, run `herdr-reviewr resolve-herdr {}` to \
+         clear it from the review.\n\n",
+        c.file, c.text, c.id
+    )
 }
 
 /// Compute `(side, start, end, snippet)` for a selection of diff rows.
@@ -3966,6 +3985,7 @@ mod tests {
     fn config_recovery_carries_saved_comments_and_the_live_draft() {
         let mut old = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
         old.store.add(Comment {
+            id: 0,
             file: "src/lib.rs".to_string(),
             side: Side::New,
             start: 1,
@@ -4070,6 +4090,7 @@ mod tests {
 
     fn comment_on(file: &str, line: u32, text: &str) -> Comment {
         Comment {
+            id: 0,
             file: file.to_string(),
             side: Side::New,
             start: line,
@@ -4147,16 +4168,26 @@ mod tests {
     }
 
     #[test]
-    fn an_address_prompt_mentions_the_file_and_carries_the_line_and_text() {
+    fn an_address_prompt_mentions_the_file_carries_the_line_text_and_resolve_command() {
         // A single-line comment names one line; the `@path` is the bare file so Copilot resolves
-        // it, and a trailing blank line parks the cursor for the reviewer's instruction.
-        let one = comment_on("src/lib.rs", 7, "unwrap can panic");
-        assert_eq!(super::address_prompt(&one), "@src/lib.rs (line 7): unwrap can panic\n\n");
+        // it, and the closing line tells the agent to clear it with `resolve-herdr <id>`.
+        let mut one = comment_on("src/lib.rs", 7, "unwrap can panic");
+        one.id = 3;
+        assert_eq!(
+            super::address_prompt(&one),
+            "@src/lib.rs (line 7): unwrap can panic\n\nWhen this is fixed, run \
+             `herdr-reviewr resolve-herdr 3` to clear it from the review.\n\n"
+        );
 
-        // A multi-line comment names the range.
+        // A multi-line comment names the range and still carries its own id.
         let mut span = comment_on("a.rs", 3, "extract this");
         span.end = 5;
-        assert_eq!(super::address_prompt(&span), "@a.rs (line 3-5): extract this\n\n");
+        span.id = 12;
+        assert_eq!(
+            super::address_prompt(&span),
+            "@a.rs (line 3-5): extract this\n\nWhen this is fixed, run \
+             `herdr-reviewr resolve-herdr 12` to clear it from the review.\n\n"
+        );
     }
 
     #[test]
@@ -4166,5 +4197,38 @@ mod tests {
         app.focus = crate::Focus::Comments;
         app.address_comment();
         assert!(app.store.is_empty());
+    }
+
+    #[test]
+    fn address_keeps_the_comment_in_the_store() {
+        // Addressing drafts a prompt; it must never drop the comment — the finding stays on the
+        // checklist until a resolve clears it. With no reachable agent the draft can't land, and
+        // the comment is still there either way, proving `a` is not a consume.
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        app.store.add(comment_on("src/lib.rs", 1, "bug"));
+        app.focus = crate::Focus::Comments;
+        app.address_comment();
+        assert_eq!(app.store.len(), 1, "addressing leaves the comment for the reviewer");
+    }
+
+    #[test]
+    fn resolve_ai_comments_drops_only_the_named_ids() {
+        // The pane's return-leg poll: `resolve-herdr` ids remove exactly those comments, an
+        // unknown id is a no-op, and an emptied rail hands focus back to the diff.
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        app.store.add(comment_on("a.rs", 1, "one")); // id 1
+        app.store.add(comment_on("b.rs", 2, "two")); // id 2
+        app.store.add(comment_on("c.rs", 3, "three")); // id 3
+        app.focus = crate::Focus::Comments;
+
+        let removed = app.resolve_ai_comments(vec![2, 99]);
+        assert_eq!(removed, 1, "only the live id resolves; the unknown one is ignored");
+        let files: Vec<&str> = app.store.iter().map(|c| c.file.as_str()).collect();
+        assert_eq!(files, vec!["a.rs", "c.rs"], "the addressed comment is gone, the rest stay");
+
+        let removed = app.resolve_ai_comments(vec![1, 3]);
+        assert_eq!(removed, 2);
+        assert!(app.store.is_empty(), "resolving the rest empties the store");
+        assert_eq!(app.focus, crate::Focus::Diff, "an emptied rail returns focus to the diff");
     }
 }

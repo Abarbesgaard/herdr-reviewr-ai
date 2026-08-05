@@ -104,20 +104,36 @@ overlay as the only list surface, which shows the comments over the page rather 
   on the highlighted row, as they do in the overlay.
 - Emptying the store returns focus to the diff, since a rail with no rows has nothing to hold.
 
-## Addressing and discarding a comment
+## Addressing, resolving, and discarding a comment
 
-The reviewer works a comment two ways, from the rail, the overlay, or the diff cursor:
+The reviewer works a comment from the rail, the overlay, or the diff cursor. The footer surfaces
+the keys — `a address · e edit · d delete` — wherever a comment is the target.
 
 - **Address (`a`)** drafts a prompt into the adjacent agent pane and hands it focus, but does not
   submit — the reviewer adds their instruction and sends it themselves. The prompt is
-  `@file (line N): <comment text>` (a range reads `N-M`) with a trailing blank line for the cursor
-  to land under. The `@file` is the bare path so Copilot resolves the mention; the line goes in the
-  prose after it, never as a `:line` suffix that would break the mention. The comment is consumed
-  only on a successful hand-off; a closed pane keeps it. When several agent panes exist the picker
+  `@file (line N): <comment text>` (a range reads `N-M`), then a blank line for the cursor to land
+  under, then a closing line telling the agent how to clear it:
+  `When this is fixed, run `herdr-reviewr resolve-herdr <id>` to clear it from the review.` The
+  `@file` is the bare path so Copilot resolves the mention; the line goes in the prose after it,
+  never as a `:line` suffix that would break the mention. **Addressing does not consume the
+  comment** — the finding stays on the reviewer's checklist until it is actually resolved, because a
+  drafted prompt is the start of a fix, not the fix. When several agent panes exist the picker
   resolves which one, carrying the drafted prompt across the choice. This reuses the send-to-pane
   path (fill-and-focus, no submit), one comment instead of the whole set.
+- **Resolve** clears an addressed comment once it is fixed. The agent (or the reviewer) runs
+  `herdr-reviewr resolve-herdr <id>...`, a transient non-UI subcommand that appends the ids to a
+  per-worktree resolve inbox under the temp dir — the return leg of the review-inbox handoff, and
+  bound by the same rules (temp-dir only, keyed by worktree, consumed on read). Unlike the review
+  inbox, resolves accumulate: several fixes between two polls all land, and a repeated id collapses.
+  The pane polls the resolve inbox each tick and drops every comment whose id matches, repainting
+  with no keystroke; an unknown id is a silent no-op, so a stale or duplicate resolve is harmless.
+  Each comment carries a stable per-session id (`CommentStore` stamps a rising counter on add) so
+  the agent, handed the id in the address prompt, can name exactly that comment however long the fix
+  takes and however the neighbours shift. Ids are in-memory: a pane close drops the comments and
+  their ids together, and a resolve for a comment that is already gone does nothing.
 - **Discard (`d`)** deletes the targeted comment outright — the reviewer's judgement that a finding
-  is irrelevant. Emptying the store this way returns focus to the diff.
+  is irrelevant, needing no agent round-trip. Emptying the store — by resolve or discard — returns
+  focus to the diff.
 
 ## Non-goals
 

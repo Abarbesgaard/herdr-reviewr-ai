@@ -9,6 +9,7 @@
 //! [`app::App`] methods and renders with [`ui`].
 
 pub mod ai_inbox;
+pub mod ai_resolve;
 pub mod ai_review;
 pub mod app;
 pub mod azure_devops;
@@ -28,6 +29,7 @@ pub mod log;
 pub mod markdown;
 pub mod model;
 pub mod proc;
+pub mod resolve_herdr;
 pub mod review_herdr;
 pub mod search;
 pub mod theme;
@@ -864,6 +866,22 @@ fn event_loop(
                 if added > 0 {
                     app.status =
                         format!("AI review: {added} comment{}", if added == 1 { "" } else { "s" });
+                    continue;
+                }
+            }
+
+            // The return leg (specs/ai-review.md): the moment `resolve-herdr` appends ids — the
+            // agent (or reviewer) marking a finding fixed — the pane drops those comments and
+            // repaints, no keystroke needed. Consumed on read, so a set never re-fires.
+            if app.config_error().is_none()
+                && let Some(ids) = crate::ai_resolve::take(&app.repo)
+            {
+                let removed = app.resolve_ai_comments(ids);
+                if removed > 0 {
+                    app.status = format!(
+                        "resolved {removed} comment{}",
+                        if removed == 1 { "" } else { "s" }
+                    );
                     continue;
                 }
             }

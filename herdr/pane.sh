@@ -104,10 +104,10 @@ panes_json=$("$H" pane list --workspace "$ws" 2>/dev/null) && [ -n "$panes_json"
 
 # A reviewr pane runs the review UI in its foreground process group (specs/herdr-host.md,
 # Pane identity). A wrapped launch (`cargo run`) counts through its child; a flag run
-# (`--resolve-plugin-config`) or the `review-herdr` subcommand never counts. The executable
-# name in `argv0`/`argv[0]` decides, never `name`: that field is a rewritable process title
-# (docs/herdr-api-notes.md). The exclusions mirror the dispatch in `src/main.rs`, which
-# recognizes both the flag (anywhere in argv) and the subcommand (argv[1]) — a future non-UI
+# (`--resolve-plugin-config`) or the `review-herdr`/`resolve-herdr` subcommands never count.
+# The executable name in `argv0`/`argv[0]` decides, never `name`: that field is a rewritable
+# process title (docs/herdr-api-notes.md). The exclusions mirror the dispatch in `src/main.rs`,
+# which recognizes the flag (anywhere in argv) and the subcommands (argv[1]) — a future non-UI
 # entrypoint must land in both halves.
 # Takes the pane id and a scratch file for the call's stderr, which stays out of the JSON
 # handed to jq — a successful call with an advisory on stderr must not read as unreadable.
@@ -130,7 +130,8 @@ is_reviewr_pane() {
       | select((((.argv0 // "") | base) == "herdr-reviewr")
           or ((((.argv // [])[0] // "") | base) == "herdr-reviewr"))
       | select(((.argv // []) | index("--resolve-plugin-config")) == null)
-      | select(((.argv // [])[1] // "") != "review-herdr")]
+      | select(((.argv // [])[1] // "") != "review-herdr")
+      | select(((.argv // [])[1] // "") != "resolve-herdr")]
     | length' 2>/dev/null) || return 2
   # An empty count is a read that failed some new way, so the `[` error's status 2 refuses
   # it — a default here would pick the one outcome the failure semantics forbid.
