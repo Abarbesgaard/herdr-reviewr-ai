@@ -3403,6 +3403,11 @@ impl App {
             if self.pr_snapshot().is_some() {
                 out.push((A::OpenPr, Primary));
             }
+            // `a` addresses the selected PR comment into the agent pane, the same as a local one
+            // — only when a comment is selected (not the pinned description row).
+            if self.pr_selected_comment().is_some() {
+                out.push((A::Address, Do));
+            }
             out.push((A::Search, Go));
             out.push((A::TogglePane, Go));
             out.push((A::NavigatorPosition, Go));
@@ -3566,6 +3571,22 @@ impl App {
         let Some(index) = self.target_comment() else { return };
         let Some(c) = self.store.get(index) else { return };
         let text = address_prompt(c);
+        match herdr::send_target() {
+            Ok(SendTarget::One(agent)) => self.deliver_address(&agent, &text),
+            Ok(SendTarget::Many(rows)) => {
+                self.pending_address = Some(text);
+                self.open_picker(rows);
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Draft the selected PR comment into the agent pane — the same fill-and-focus, no-submit
+    /// hand-off as a local `address` (`specs/ai-review.md`). PR comments are read-only here, so
+    /// this only moves the comment to the agent to act on: it never consumes it, resolves it, or
+    /// writes to the forge. A pinned description row or a degraded view has nothing to address.
+    pub fn address_pr_comment(&mut self) {
+        let Some(text) = self.pr_selected_comment().map(pr_address_prompt) else { return };
         match herdr::send_target() {
             Ok(SendTarget::One(agent)) => self.deliver_address(&agent, &text),
             Ok(SendTarget::Many(rows)) => {
@@ -3893,6 +3914,23 @@ fn address_prompt(c: &Comment) -> String {
     )
 }
 
+/// The prompt an `address` fills into the agent pane for a PR comment. A finding anchored to
+/// `path:line` becomes the same `@file (line N): body` a local address uses, so the agent
+/// resolves the mention and lands on the line. An unanchored review or general comment has no
+/// file to mention, so it names the author and quotes the body instead. Unlike a local address
+/// there is no `resolve-herdr` line — a PR comment is not one of our in-memory findings and is
+/// never consumed. The blank tail parks the reviewer's cursor to add their own instruction.
+fn pr_address_prompt(c: &forge::Comment) -> String {
+    if let Some((path, line)) = c.anchor.rsplit_once(':')
+        && !path.is_empty()
+        && line.parse::<u32>().is_ok()
+    {
+        format!("@{path} (line {line}): {}\n\n", c.body)
+    } else {
+        format!("PR comment from {}: {}\n\n", c.author, c.body)
+    }
+}
+
 /// Compute `(side, start, end, snippet)` for a selection of diff rows.
 ///
 /// New-side numbers win when present (insertion/context rows); a pure deletion
@@ -4188,6 +4226,44 @@ mod tests {
             "@a.rs (line 3-5): extract this\n\nWhen this is fixed, run \
              `herdr-reviewr resolve-herdr 12` to clear it from the review.\n\n"
         );
+    }
+
+    #[test]
+    fn a_pr_address_prompt_mentions_the_file_for_an_anchored_finding() {
+        // An inline PR finding anchored to `path:line` becomes the same `@file (line N)` mention
+        // a local address uses, so Copilot resolves the file and lands on the line. There is no
+        // `resolve-herdr` tail — a PR comment is not one of our in-memory findings.
+        let mut c = crate::forge::Comment {
+            kind: crate::forge::CommentKind::Finding,
+            author: "octocat".into(),
+            author_is_bot: true,
+            anchor: "src/lib.rs:42".into(),
+            body: "unwrap can panic".into(),
+            snippet: None,
+            created_at: "2026-06-27T10:00:00Z".into(),
+            is_resolved: false,
+            is_outdated: false,
+            reply_count: 0,
+        };
+        assert_eq!(super::pr_address_prompt(&c), "@src/lib.rs (line 42): unwrap can panic\n\n");
+
+        // An unanchored review/comment has no file to mention, so it names the author instead.
+        c.kind = crate::forge::CommentKind::Review;
+        c.anchor = "review".into();
+        c.body = "please split this PR".into();
+        assert_eq!(
+            super::pr_address_prompt(&c),
+            "PR comment from octocat: please split this PR\n\n"
+        );
+    }
+
+    #[test]
+    fn addressing_a_pr_comment_with_nothing_selected_is_inert() {
+        // On the PR tab with no selected comment, `a` neither shells out to a host nor panics.
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        app.tab = crate::app::Tab::Pr;
+        app.address_pr_comment();
+        assert!(app.pr_selected_comment().is_none());
     }
 
     #[test]

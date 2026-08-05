@@ -1558,6 +1558,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             (Some(K::NavigatorShrink), _) => app.resize_navigator(-4),
             (Some(K::Down), _) => app.pr_move(1),
             (Some(K::Up), _) => app.pr_move(-1),
+            (Some(K::Address), _) => app.address_pr_comment(),
             (Some(K::Keys), _) => app.toggle_keys(),
             (_, Esc) => app.escape(),
             (_, Tab) => app.toggle_focus(),

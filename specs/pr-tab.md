@@ -39,7 +39,7 @@ The tab is labeled `PR` on every forge. Body text, the chip, the read pane's tit
 
 - The header right-anchors a clickable `status #226 ↗` chip, status colored by lifecycle: `open` green, `draft` yellow, `merged` mauve, `closed` red. The `draft` status shows only while the PR is open. The PR title sits to its left, truncated to fit.
 - Between title and chip sits the resolved head branch (`head_ref`, `forge-host.md`), dim, prefixed `⑂ ` when the head lives in a fork. On a narrow bar the branch drops first.
-- The footer leads with merge, sync, checks, and comment counts, then `o open ↗` and the `?`. Merge and sync show only while the PR is open. A capped surface appends a `+more ↗` link naming the forge (`forge-host.md`).
+- The footer leads with merge, sync, checks, and comment counts, then `o open ↗` and the `?`. When a comment is selected it also shows `a address`. Merge and sync show only while the PR is open. A capped surface appends a `+more ↗` link naming the forge (`forge-host.md`).
 - The `?` expands to the `go` band and a `move` band of down, up, and the page keys. The `PR` tab has no hunk or file steps (`input.md`).
 - The ordinary no-PR body says only `No pull request yet. Ready to ship?` A detached HEAD says `No pull request found — HEAD is detached.` Both use the forge's noun.
 
@@ -54,6 +54,7 @@ The tab is labeled `PR` on every forge. Body text, the chip, the read pane's tit
 - `j`/`k` or a click selects a description or comment and reveals it in the navigator viewport. Checks are not selectable.
 - The wheel over the navigator scrolls its viewport without changing the selection. The wheel over the read pane scrolls the read pane. `PageUp`/`PageDown` scroll the focused pane. Both panes stop with their last line at the bottom edge.
 - `o` or the chip opens the PR in the browser.
+- With a comment selected, `a` addresses it: the comment is drafted into the agent pane exactly like a local review comment (`ai-review.md`) — an anchored finding as `@path (line N): body`, an unanchored review or comment as `PR comment from author: body` — the pane focused, nothing submitted. It is address-only: the PR is read-only, so nothing is consumed, resolved, or written back to the forge. The description row has nothing to address.
 - A body taller than the read pane shows a scrollbar on the pane's right border. One that fits shows none.
 - A retry notice for a preserved snapshot stays fixed above the read body, so it remains visible without resetting the reader's scroll.
 - The authoring keys (`s`, `c`, `v`, `d`, `e`) do nothing here.
