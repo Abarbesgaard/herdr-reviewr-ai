@@ -16,9 +16,9 @@ review. See `specs/ai-review.md` for the full behaviour.
 ## Install
 
 ```bash
-# 1. Clone this repo
-git clone <this-repo-url> herdr-reviewr-ai
-cd herdr-reviewr-ai
+# 1. Clone this repo (default branch is `ai-review`, so you land on it directly)
+git clone https://github.com/Abarbesgaard/reviewr-local-ai
+cd reviewr-local-ai
 
 # 2. Build the binary into the plugin's bin/ dir
 cargo build --release
