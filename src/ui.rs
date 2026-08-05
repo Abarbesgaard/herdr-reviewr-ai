@@ -65,7 +65,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_tab_bar(frame, app, p.tab);
         render_diff_view(frame, app, p.diff);
         if !app.navigator_hidden_here() {
-            render_file_list(frame, app, p.files);
+            let (files_list, comments_rail) = nav_split(app, p.files);
+            render_file_list(frame, app, files_list);
+            if app.comments_rail_visible() {
+                render_comments_rail(frame, app, comments_rail);
+            }
         }
     }
     // One footer band on every tab, drawn after the per-tab base so it sits on both layouts.
@@ -175,6 +179,40 @@ fn split_body(body: Rect, position: NavigatorPosition, share: u16) -> (Rect, Rec
     }
 }
 
+/// Split the navigator rect into the file list (top) and the docked comments rail (bottom).
+/// The rail claims up to half the navigator's height (its rows plus a border), leaving the
+/// rest to the tree; with no rail to show — no comments, the `PR` tab, or too little room —
+/// the file list keeps the whole rect and the rail is a zero-height rect just past its
+/// bottom edge, so a hit test can never land in it (`specs/ai-review.md`).
+fn nav_split(app: &App, files: Rect) -> (Rect, Rect) {
+    let empty = Rect::new(files.x, files.y + files.height, files.width, 0);
+    if !app.comments_rail_visible() || files.height < 6 {
+        return (files, empty);
+    }
+    // The rail tracks its content (`+2` for the border) but sits on a floor of a third of the
+    // navigator, so even a one-comment rail rises off the bottom edge into the eye's middle
+    // band rather than clinging to the corner (`specs/ai-review.md`). The half-height cap keeps
+    // the file list usable.
+    let content = (app.store.len() as u16).saturating_add(2);
+    let floor = (files.height / 3).max(3);
+    let want = content.clamp(floor, files.height / 2);
+    let list_h = files.height - want;
+    (
+        Rect::new(files.x, files.y, files.width, list_h),
+        Rect::new(files.x, files.y + list_h, files.width, want),
+    )
+}
+
+/// The file-list sub-rect of the navigator (the rail carved off), for painting and hit-testing.
+fn files_list_rect(area: Rect, app: &App) -> Rect {
+    nav_split(app, panes(area, app).files).0
+}
+
+/// The comments-rail sub-rect of the navigator, for painting and hit-testing.
+fn comments_rail_rect(area: Rect, app: &App) -> Rect {
+    nav_split(app, panes(area, app).files).1
+}
+
 /// The whole body band (between the tab bar and status bar), for divider hit-testing.
 #[must_use]
 pub fn body_rect(area: Rect, app: &App) -> Rect {
@@ -218,7 +256,7 @@ pub fn hit_file(
     n_files: usize,
     file_scroll: usize,
 ) -> Option<usize> {
-    let inner = inner_rect(panes(area, app).files);
+    let inner = inner_rect(files_list_rect(area, app));
     if !contains(inner, col, row) {
         return None;
     }
@@ -229,13 +267,35 @@ pub fn hit_file(
 /// The number of file rows visible in the file pane, used to clamp the file-list scroll.
 #[must_use]
 pub fn file_viewport_height(area: Rect, app: &App) -> usize {
-    inner_rect(panes(area, app).files).height as usize
+    inner_rect(files_list_rect(area, app)).height as usize
 }
 
 /// Whether `(col, row)` falls in the file pane, so the wheel scrolls the list it is over.
 #[must_use]
 pub fn in_files_pane(area: Rect, app: &App, col: u16, row: u16) -> bool {
-    contains(panes(area, app).files, col, row)
+    contains(files_list_rect(area, app), col, row)
+}
+
+/// Whether `(col, row)` falls in the docked comments rail.
+#[must_use]
+pub fn in_comments_rail(area: Rect, app: &App, col: u16, row: u16) -> bool {
+    app.comments_rail_visible() && contains(comments_rail_rect(area, app), col, row)
+}
+
+/// The comment-store index a click at `(col, row)` lands on in the rail, or `None` if outside
+/// it. Mirrors the rail's own scroll so a click maps to the row painted there.
+#[must_use]
+pub fn hit_comment_rail(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
+    if !app.comments_rail_visible() {
+        return None;
+    }
+    let inner = inner_rect(comments_rail_rect(area, app));
+    if !contains(inner, col, row) {
+        return None;
+    }
+    let scroll = comments_rail_scroll(app.list_cursor, app.store.len(), inner.height as usize);
+    let idx = (row - inner.y) as usize + scroll;
+    (idx < app.store.len()).then_some(idx)
 }
 
 /// Whether `(col, row)` falls in the diff pane — the markdown preview's click target,
@@ -1430,6 +1490,7 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         A::ClearSelection => ("esc".into(), "clear"),
         A::EditComment => (hint(K::Edit), "edit"),
         A::DeleteComment => (hint(K::Delete), "delete"),
+        A::Address => (hint(K::Address), "address"),
         A::JumpComment => (format!("{}/{}", hint(K::NextComment), hint(K::PrevComment)), "jump"),
         A::ExpandFold => ("→".into(), "expand fold"),
         // The armed crossing is keyed to the hunk step that armed it, so a rebound `next-hunk`
@@ -1774,6 +1835,55 @@ fn render_band(
 /// than its content's size, so the geometry holds still while comments come and go.
 const LIST_POPUP_W_PCT: u16 = 80;
 const LIST_POPUP_H_PCT: u16 = 70;
+
+/// The rail's top visible row: keep the highlighted comment on screen, biased toward the
+/// middle so stepping does not pin it to an edge. Stateless — recomputed each paint from the
+/// cursor, so it never drifts out of sync with the store.
+fn comments_rail_scroll(cursor: usize, len: usize, viewport: usize) -> usize {
+    if viewport == 0 || len <= viewport {
+        return 0;
+    }
+    cursor.saturating_sub(viewport / 2).min(len - viewport)
+}
+
+/// The docked comments rail: a bordered list of every comment as `path:line  text`, the
+/// highlighted row filled (dimmed when the rail is unfocused), a moved anchor flagged
+/// `(stale)`. Sits under the file list so the reviewer pages the review's comments like a
+/// PR's "files changed" list (`specs/ai-review.md`).
+fn render_comments_rail(frame: &mut Frame, app: &App, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+    let p = app.palette();
+    let focused = app.focus == Focus::Comments;
+    let block = bordered(&format!("Comments ({})", app.store.len()), focused, p);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let width = inner.width as usize;
+    let viewport = inner.height as usize;
+    let scroll = comments_rail_scroll(app.list_cursor, app.store.len(), viewport);
+    let items: Vec<ListItem> = app
+        .store
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(viewport)
+        .map(|(i, c)| {
+            let loc = Span::styled(
+                format!(" {}", c.location()),
+                Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
+            );
+            let mut spans = vec![loc, Span::styled(format!("  {}", c.text), text_style(p))];
+            if app.is_stale(c) {
+                spans.push(Span::styled("  (stale)", Style::default().fg(p.red)));
+            }
+            let fill = (i == app.list_cursor).then(|| p.cursor_bg(focused));
+            selectable_row(p, spans, width, fill)
+        })
+        .collect();
+    frame.render_widget(List::new(items), inner);
+}
 
 fn render_comments_list(frame: &mut Frame, app: &App, area: Rect) {
     let p = app.palette();
@@ -3132,5 +3242,42 @@ fn inner_rect(outer: Rect) -> Rect {
         y: outer.y.saturating_add(1),
         width: outer.width.saturating_sub(2),
         height: outer.height.saturating_sub(2),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{comments_rail_rect, files_list_rect};
+    use crate::app::App;
+    use crate::model::{Comment, Scope, Side};
+    use ratatui::layout::Rect;
+    use std::path::PathBuf;
+
+    fn one_comment(app: &mut App) {
+        app.store.add(Comment {
+            file: "src/lib.rs".to_string(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            lines: "+bug".to_string(),
+            text: "bug".to_string(),
+            diff_anchored: true,
+        });
+    }
+
+    #[test]
+    fn the_rail_sits_on_a_third_height_floor_so_a_thin_rail_lifts_off_the_corner() {
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        one_comment(&mut app);
+        let area = Rect::new(0, 0, 80, 40);
+        let list = files_list_rect(area, &app);
+        let rail = comments_rail_rect(area, &app);
+        let nav_h = list.height + rail.height;
+        assert!(nav_h >= 6, "the navigator is tall enough to split");
+        assert!(
+            rail.height >= nav_h / 3,
+            "a one-comment rail rises to at least a third of the navigator, not a corner strip"
+        );
+        assert!(rail.height * 2 <= nav_h, "the file list keeps at least half the height");
     }
 }

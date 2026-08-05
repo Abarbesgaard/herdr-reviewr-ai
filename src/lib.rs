@@ -8,6 +8,8 @@
 //! owns the terminal lifecycle and the event loop; it maps input events onto
 //! [`app::App`] methods and renders with [`ui`].
 
+pub mod ai_inbox;
+pub mod ai_review;
 pub mod app;
 pub mod azure_devops;
 pub mod browser;
@@ -26,6 +28,7 @@ pub mod log;
 pub mod markdown;
 pub mod model;
 pub mod proc;
+pub mod review_herdr;
 pub mod search;
 pub mod theme;
 pub mod turn;
@@ -851,6 +854,20 @@ fn event_loop(
                 // computed but unpainted until the next wake (policies/ux-responsiveness.md).
                 continue;
             }
+            // Auto-ingest a pending AI-review batch (specs/ai-review.md): the moment the
+            // `review-herdr` subcommand writes the inbox, its comments land in the store and
+            // paint — no keystroke in the pane. Consumed on read, so it never re-adds.
+            if app.config_error().is_none()
+                && let Some(batch) = crate::ai_inbox::take(&app.repo)
+            {
+                let added = app.ingest_ai_comments(batch);
+                if added > 0 {
+                    app.status =
+                        format!("AI review: {added} comment{}", if added == 1 { "" } else { "s" });
+                    continue;
+                }
+            }
+
             // A closed overlay owes no landing: without this, a still-warming engine's
             // periodic `indexing…` completions would re-arm the tight wake after `esc`
             // and spin the loop until the cold scan finishes.
@@ -1548,6 +1565,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             }
             (Some(K::Edit), _) => app.start_edit(),
             (Some(K::Delete), _) => app.delete_comment(),
+            (Some(K::Address), _) => app.address_comment(),
             _ => {}
         }
         return Ok(());
@@ -1582,9 +1600,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::Comment => app.start_comment(),
             // `edit`/`delete` act on the comment under the diff cursor, so they only fire with
             // the diff focused — otherwise `delete` would silently drop a comment under an
-            // off-screen cursor. (The comments-list overlay targets the highlighted row instead.)
-            K::Edit if app.focus == Focus::Diff => app.start_edit(),
-            K::Delete if app.focus == Focus::Diff => app.delete_comment(),
+            // off-screen cursor. The comments-list overlay and the docked rail target their
+            // highlighted row instead.
+            K::Edit if app.focus == Focus::Diff || app.focus == Focus::Comments => app.start_edit(),
+            K::Delete if app.focus == Focus::Diff || app.focus == Focus::Comments => {
+                app.delete_comment();
+            }
+            K::Address if app.focus == Focus::Diff || app.focus == Focus::Comments => {
+                app.address_comment();
+            }
             K::Send => app.send_to_agent(),
             K::Copy => {
                 app.export(&Clipboard);
@@ -1595,8 +1619,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::Search => app.open_search(),
             K::Find => app.open_find(),
             K::Keys => app.toggle_keys(),
-            // `edit`/`delete` off the diff, and `open-pr` off the `PR` tab, are inert.
-            K::Edit | K::Delete | K::OpenPr => {}
+            // `edit`/`delete`/`address` off the diff, and `open-pr` off the `PR` tab, are inert.
+            K::Edit | K::Delete | K::Address | K::OpenPr => {}
         }
         return Ok(());
     }
@@ -1795,6 +1819,9 @@ pub fn handle_mouse(
                 ui::hit_file(area, app, m.column, m.row, app.file_rows.len(), app.file_scroll)
             {
                 app.select_file(i)?;
+            } else if let Some(i) = ui::hit_comment_rail(area, app, m.column, m.row) {
+                // A click on the docked rail highlights that comment and reveals it in the diff.
+                app.select_comment_row(i);
             } else if let Some(url) = app.painted_link_at(m.column, m.row) {
                 // A link click resolves against the painted frame (specs/markdown.md).
                 app.open_link(&url);
@@ -1827,6 +1854,14 @@ pub fn handle_mouse(
         // The wheel scrolls the viewport of whichever pane it is over — never the cursor, so
         // a comment is never anchored to a wheeled-past line. Horizontal scroll is
         // keyboard-only (`←`/`→`), since multiplexers don't reliably deliver h-wheel events.
+        MouseEventKind::ScrollDown if ui::in_comments_rail(area, app, m.column, m.row) => {
+            app.focus = Focus::Comments;
+            app.move_cursor(3)?;
+        }
+        MouseEventKind::ScrollUp if ui::in_comments_rail(area, app, m.column, m.row) => {
+            app.focus = Focus::Comments;
+            app.move_cursor(-3)?;
+        }
         MouseEventKind::ScrollDown if ui::in_files_pane(area, app, m.column, m.row) => {
             app.wheel_files(3);
         }

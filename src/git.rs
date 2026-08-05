@@ -897,6 +897,14 @@ fn diff_base(repo: &Path) -> String {
     }
 }
 
+/// The unified diff of one path against the uncommitted base — `HEAD`, or the empty tree in a
+/// repo with no commits — uncolored, for the `review-herdr` subcommand (specs/ai-review.md).
+/// Untracked files are not in the base, so they diff empty (the caller reads them directly).
+pub fn unified_diff(repo: &Path, path: &str) -> Result<String> {
+    let base = diff_base(repo);
+    git(repo, &["diff", "--no-color", "-U3", &base, "--", path])
+}
+
 /// The changed files for `scope`, sorted by path. `base` overrides the base-config snapshot.
 /// `last-turn` is resolved separately by [`changed_against_tree`], so it lists nothing here.
 pub fn changed_files(

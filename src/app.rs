@@ -48,6 +48,10 @@ enum DividerDrag {
 pub enum Focus {
     Files,
     Diff,
+    /// The comments rail docked under the file list — a navigable list of the review's
+    /// comments, so the reviewer can page through them like a PR's "files changed" list
+    /// (`specs/ai-review.md`).
+    Comments,
 }
 
 /// What the file-list cursor points at, by path, so it can be restored to the same target
@@ -305,6 +309,7 @@ pub enum FooterAction {
     ClearSelection,
     EditComment,
     DeleteComment,
+    Address,
     JumpComment,
     ExpandFold,
     /// Take the armed crossing: the hunk step that armed it leaves the file when pressed again.
@@ -492,6 +497,10 @@ pub struct App {
     /// The mode the picker opened over — `Normal`, the comments list, or the find band —
     /// so closing it restores the view the reviewer sent from (`specs/input.md`).
     pub picker_over: Mode,
+    /// A single comment's address prompt held while the picker chooses which agent it goes to,
+    /// with the store index to consume on delivery. `None` means a picked send exports the whole
+    /// store instead (`specs/ai-review.md`).
+    pub pending_address: Option<(usize, String)>,
     /// The agent this session last sent to, which arms the picker's highlight. Only a
     /// successful send sets it (`specs/herdr-host.md`).
     pub last_sent_pane: Option<String>,
@@ -656,6 +665,7 @@ impl App {
             picker_rows: Vec::new(),
             picker_cursor: 0,
             picker_over: Mode::Normal,
+            pending_address: None,
             last_sent_pane: None,
             mode: Mode::Normal,
             input: String::new(),
@@ -2055,8 +2065,14 @@ impl App {
             return;
         }
         self.focus = match self.focus {
+            // Tab cycles Files → Diff → Comments (when the rail is up) → Files, so the reviewer
+            // reaches the comment list without leaving the keyboard's home row (`specs/tui.md`).
             Focus::Files => Focus::Diff,
-            Focus::Diff => Focus::Files,
+            Focus::Diff if self.comments_rail_visible() => {
+                self.reveal_selected_comment();
+                Focus::Comments
+            }
+            Focus::Diff | Focus::Comments => Focus::Files,
         };
     }
 
@@ -2088,6 +2104,15 @@ impl App {
                     }
                     self.diff_cursor = target;
                     self.reveal_diff = true;
+                }
+            }
+            Focus::Comments => {
+                // Stepping the rail moves its highlight and follows the selection into the diff,
+                // so the commented line is always on screen — like clicking a PR comment
+                // (`specs/ai-review.md`).
+                if !self.store.is_empty() {
+                    self.list_cursor = step(self.list_cursor, delta, self.store.len());
+                    self.reveal_selected_comment();
                 }
             }
         }
@@ -2485,9 +2510,9 @@ impl App {
 
     pub fn start_edit(&mut self) {
         // Cards don't show in the preview, so `e` on the invisible source cursor is inert;
-        // an edit reached through the comments-list overlay drops back to source, where
-        // the composer and its anchor are visible (specs/diff-view.md).
-        if self.preview_active() && self.mode != Mode::List {
+        // an edit reached through the comments-list overlay or the docked rail drops back to
+        // source, where the composer and its anchor are visible (specs/diff-view.md).
+        if self.preview_active() && self.mode != Mode::List && self.focus != Focus::Comments {
             return;
         }
         // Editing from the comments-list overlay returns there on finish (else to the diff).
@@ -2733,6 +2758,21 @@ impl App {
         anchor(self.visible.get(lo..=hi)?)
     }
 
+    /// Add a batch of AI-review comments from the inbox to the store, mapping each onto the
+    /// model and dropping any with an unreadable anchor. Returns how many landed. The store is
+    /// the same in-memory list the user's own comments live in, so they export and send alike
+    /// (specs/ai-review.md).
+    pub fn ingest_ai_comments(&mut self, batch: Vec<crate::ai_inbox::InboxComment>) -> usize {
+        let mut added = 0;
+        for c in batch {
+            if let Some(comment) = crate::ai_inbox::to_comment(c) {
+                self.store.add(comment);
+                added += 1;
+            }
+        }
+        added
+    }
+
     fn build_comment(&self, text: String) -> Option<Comment> {
         // Anchor to the file the open diff belongs to (`diff_path`), not the file-list
         // selection — they diverge if the list shifts under a comment in progress.
@@ -2810,13 +2850,55 @@ impl App {
         cards
     }
 
-    /// The store index to act on: the comment under the diff cursor, or — in the
-    /// list overlay — the highlighted row.
+    /// The store index to act on: the comment under the diff cursor, the highlighted row of
+    /// the list overlay, or — with the comments rail focused — its highlighted row.
     fn target_comment(&self) -> Option<usize> {
-        if self.mode == Mode::List {
+        if self.mode == Mode::List || self.focus == Focus::Comments {
             return (self.list_cursor < self.store.len()).then_some(self.list_cursor);
         }
         self.comment_under_cursor()
+    }
+
+    /// Whether the docked comments rail shows: a diff tab with a live navigator and at least
+    /// one comment to list. The `PR` tab has its own navigator, and a hidden navigator hides
+    /// the rail with the file list it sits under (`specs/ai-review.md`).
+    #[must_use]
+    pub fn comments_rail_visible(&self) -> bool {
+        self.tab != Tab::Pr && !self.navigator_hidden_here() && !self.store.is_empty()
+    }
+
+    /// Open the rail's highlighted comment in the read pane and put the diff cursor on its
+    /// line, so stepping the rail scrolls the commented line into view. A no-op when the store
+    /// is empty or the comment's file is not in the changeset.
+    fn reveal_selected_comment(&mut self) {
+        let Some(c) = self.store.get(self.list_cursor).cloned() else { return };
+        if self.diff_path.as_deref() != Some(c.file.as_str()) {
+            if let Some(row) = self.file_row_of_path(&c.file) {
+                self.file_cursor = row;
+                self.reveal_files = true;
+            }
+            let previous = self
+                .entries
+                .iter()
+                .find(|e| e.path == c.file)
+                .and_then(|e| e.previous_path.clone());
+            self.open_path_in_tab(c.file.clone(), previous);
+        }
+        if let Some(i) = self.visible.iter().position(|row| line_in(&c, row)) {
+            self.diff_cursor = i;
+            self.reveal_diff = true;
+        }
+    }
+
+    /// Select rail row `index` (a click): highlight it, focus the rail, and reveal it in the
+    /// diff. A row past the end is inert, matching the picker's out-of-range guard.
+    pub fn select_comment_row(&mut self, index: usize) {
+        if index >= self.store.len() {
+            return;
+        }
+        self.list_cursor = index;
+        self.focus = Focus::Comments;
+        self.reveal_selected_comment();
     }
 
     /// The store index of a comment whose range covers the current diff row, if any.
@@ -2827,8 +2909,9 @@ impl App {
     }
 
     pub fn delete_comment(&mut self) {
-        // Cards don't show in the preview: `d` only acts through the comments-list overlay.
-        if self.preview_active() && self.mode != Mode::List {
+        // Cards don't show in the preview: `d` only acts through the comments-list overlay or
+        // the docked rail, which target a highlighted row rather than a line under the cursor.
+        if self.preview_active() && self.mode != Mode::List && self.focus != Focus::Comments {
             return;
         }
         if let Some(i) = self.target_comment() {
@@ -2839,6 +2922,10 @@ impl App {
             // Don't strand the user in an empty "Comments (0)" overlay, matching `export`.
             if self.store.is_empty() {
                 self.close_list();
+            }
+            // A rail emptied of comments has nowhere to keep focus — fall back to the diff.
+            if self.focus == Focus::Comments && !self.comments_rail_visible() {
+                self.focus = Focus::Diff;
             }
         }
     }
@@ -3247,6 +3334,7 @@ impl App {
                     (A::Send, Primary),
                     (A::CloseList, Do),
                     (A::Copy, Do),
+                    (A::Address, Do),
                     (A::EditComment, Do),
                     (A::DeleteComment, Do),
                 ];
@@ -3320,6 +3408,14 @@ impl App {
             // Nothing in scope to review: only switching scope or refreshing is useful.
             out.push((A::Scope, Primary));
             out.push((A::Refresh, Do));
+        } else if self.focus == Focus::Comments {
+            // The rail: `enter`/tab reads the highlighted comment in the diff, and the
+            // comment's own edit/delete act on the highlighted row (`target_comment`).
+            out.push((A::TogglePane, Primary));
+            pane_is_primary = true;
+            out.push((A::Address, Do));
+            out.push((A::EditComment, Do));
+            out.push((A::DeleteComment, Do));
         } else if self.focus == Focus::Files {
             match self.file_rows.get(self.file_cursor).map(|r| &r.kind) {
                 Some(RowKind::Dir { expanded: true, .. }) => out.push((A::CollapseDir, Primary)),
@@ -3347,6 +3443,7 @@ impl App {
             out.push((A::ClearSelection, Do));
         } else if self.comment_under_cursor().is_some() {
             out.push((A::EditComment, Primary));
+            out.push((A::Address, Do));
             out.push((A::DeleteComment, Do));
             out.push((A::JumpComment, Do));
         } else {
@@ -3440,6 +3537,46 @@ fn armed_row(rows: &[AgentChoice], last_sent: Option<&str>) -> usize {
 }
 
 impl App {
+    /// `Address`: hand the comment under the cursor to the agent to fix. It fills the agent
+    /// pane's input with an `@file` prompt carrying the comment, focuses the pane, and consumes
+    /// that one comment. Unlike `send`, it submits nothing — the reviewer adds their instruction
+    /// and sends it themselves (`specs/ai-review.md`). One agent goes straight out; several open
+    /// the picker over the held prompt.
+    pub fn address_comment(&mut self) {
+        let Some(index) = self.target_comment() else { return };
+        let Some(c) = self.store.get(index) else { return };
+        let text = address_prompt(c);
+        match herdr::send_target() {
+            Ok(SendTarget::One(agent)) => self.deliver_address(&agent, index, &text),
+            Ok(SendTarget::Many(rows)) => {
+                self.pending_address = Some((index, text));
+                self.open_picker(rows);
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Deliver an address prompt to one decided pane and consume its comment only on success,
+    /// mirroring [`Self::export`] for the single-comment case. A closed pane fails here and
+    /// keeps the comment. An emptied rail hands focus back to the diff.
+    fn deliver_address(&mut self, agent: &AgentChoice, index: usize, text: &str) {
+        let target = Agent { pane: agent.pane_id.clone(), name: agent.name.clone() };
+        if target.export(text).is_err() {
+            self.status = "agent not found".to_string();
+            return;
+        }
+        self.last_sent_pane = Some(agent.pane_id.clone());
+        self.store.take(index);
+        self.clamp_list_cursor();
+        self.status = format!("addressing on {}", agent.name);
+        if self.store.is_empty() {
+            self.close_list();
+        }
+        if self.focus == Focus::Comments && !self.comments_rail_visible() {
+            self.focus = Focus::Diff;
+        }
+    }
+
     /// `Send`: one agent goes straight out, several open the picker, none refuses and names
     /// the clipboard (`specs/herdr-host.md`). The empty-store refusal is repeated here, ahead
     /// of [`Self::export`]'s own, so `Send` with nothing written shells out to no herdr call
@@ -3482,6 +3619,8 @@ impl App {
         }
         self.picker_rows.clear();
         self.picker_cursor = 0;
+        // A picker dismissed without a pick abandons the address it was resolving.
+        self.pending_address = None;
     }
 
     pub fn picker_move(&mut self, delta: isize) {
@@ -3498,13 +3637,18 @@ impl App {
         }
     }
 
-    /// Send every comment to the highlighted agent, then close whatever the outcome. A
-    /// failure reports and keeps the comments, so the reviewer can reopen a fresh picker
-    /// rather than retry against a frozen row (`specs/herdr-host.md`).
+    /// Send to the highlighted agent, then close whatever the outcome. A pending address
+    /// delivers that one comment; otherwise the whole store goes. A failure reports and keeps
+    /// the comments, so the reviewer can reopen a fresh picker (`specs/herdr-host.md`).
     pub fn picker_pick(&mut self) {
         let Some(agent) = self.picker_rows.get(self.picker_cursor).cloned() else { return };
+        // Take the address before the close clears it, so a picked address still delivers.
+        let address = self.pending_address.take();
         self.close_picker();
-        self.export_to_agent(&agent);
+        match address {
+            Some((index, text)) => self.deliver_address(&agent, index, &text),
+            None => self.export_to_agent(&agent),
+        }
     }
 
     /// Export to one decided pane. Nothing re-resolves it, so a pane that closed while the
@@ -3546,6 +3690,10 @@ impl App {
         self.clamp_list_cursor();
         if self.store.is_empty() {
             self.close_list();
+        }
+        // A rail emptied by a send has nothing to page — return focus to the diff.
+        if self.focus == Focus::Comments && !self.comments_rail_visible() {
+            self.focus = Focus::Diff;
         }
         delivered
     }
@@ -3713,6 +3861,17 @@ fn line_in(c: &Comment, row: &Row) -> bool {
         Side::Old => row.old_no(),
     };
     no.is_some_and(|n| c.start <= n && n <= c.end)
+}
+
+/// The prompt an `address` fills into the agent pane: the file as an `@`-mention so the agent
+/// resolves it, then the comment's line and text as the thing to fix. It ends with a blank
+/// line so the reviewer's cursor lands under it, ready to add an instruction before sending
+/// (`specs/ai-review.md`). The mention is the bare path; the line goes in the prose after the
+/// space that ends the mention, so a `path:line` suffix never breaks it.
+fn address_prompt(c: &Comment) -> String {
+    let line =
+        if c.start == c.end { c.start.to_string() } else { format!("{}-{}", c.start, c.end) };
+    format!("@{} (line {line}): {}\n\n", c.file, c.text)
 }
 
 /// Compute `(side, start, end, snippet)` for a selection of diff rows.
@@ -3907,5 +4066,105 @@ mod tests {
         assert!(app.set_tab(super::Tab::AllFiles).is_err());
         assert!(app.move_cursor(1).is_err());
         assert!(app.select_file(0).is_err());
+    }
+
+    fn comment_on(file: &str, line: u32, text: &str) -> Comment {
+        Comment {
+            file: file.to_string(),
+            side: Side::New,
+            start: line,
+            end: line,
+            lines: format!("+{text}"),
+            text: text.to_string(),
+            diff_anchored: true,
+        }
+    }
+
+    #[test]
+    fn the_comments_rail_shows_only_with_comments_a_live_navigator_and_a_diff_tab() {
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        assert!(!app.comments_rail_visible(), "an empty store has no rail to dock");
+
+        app.store.add(comment_on("src/lib.rs", 1, "bug"));
+        assert!(app.comments_rail_visible(), "a comment on the Changes tab shows the rail");
+
+        app.navigator_hidden = true;
+        assert!(!app.comments_rail_visible(), "a hidden navigator hides the rail with it");
+        app.navigator_hidden = false;
+
+        app.tab = super::Tab::Pr;
+        assert!(!app.comments_rail_visible(), "the PR tab has its own navigator");
+    }
+
+    #[test]
+    fn tab_cycles_through_the_comments_rail_only_when_it_is_up() {
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        // With no comments the rail is down, so Tab is the plain two-pane toggle.
+        app.focus = crate::Focus::Diff;
+        app.toggle_focus();
+        assert_eq!(app.focus, crate::Focus::Files, "no rail: Diff toggles back to Files");
+
+        app.store.add(comment_on("src/lib.rs", 1, "bug"));
+        app.toggle_focus(); // Files -> Diff
+        assert_eq!(app.focus, crate::Focus::Diff);
+        app.toggle_focus(); // Diff -> Comments (rail is up)
+        assert_eq!(app.focus, crate::Focus::Comments, "the rail joins the cycle");
+        app.toggle_focus(); // Comments -> Files
+        assert_eq!(app.focus, crate::Focus::Files, "the cycle returns to the tree");
+    }
+
+    #[test]
+    fn stepping_the_focused_rail_moves_its_highlight() {
+        let mut app = App::new(PathBuf::from("."), Scope::Uncommitted, None);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "").unwrap();
+        app.set_plugin_config(crate::config::plugin_config_in(dir.path()).unwrap());
+
+        app.store.add(comment_on("a.rs", 1, "first"));
+        app.store.add(comment_on("b.rs", 2, "second"));
+        app.focus = crate::Focus::Comments;
+
+        assert_eq!(app.list_cursor, 0);
+        app.move_cursor(1).unwrap();
+        assert_eq!(app.list_cursor, 1, "down steps the rail highlight");
+        app.move_cursor(-1).unwrap();
+        assert_eq!(app.list_cursor, 0, "up steps it back");
+    }
+
+    #[test]
+    fn deleting_the_last_comment_frees_the_rail_focus() {
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        app.store.add(comment_on("src/lib.rs", 1, "only"));
+        app.focus = crate::Focus::Comments;
+
+        app.delete_comment();
+        assert!(app.store.is_empty(), "the comment is gone");
+        assert_eq!(
+            app.focus,
+            crate::Focus::Diff,
+            "an emptied rail hands focus back to the diff, never stranding it"
+        );
+    }
+
+    #[test]
+    fn an_address_prompt_mentions_the_file_and_carries_the_line_and_text() {
+        // A single-line comment names one line; the `@path` is the bare file so Copilot resolves
+        // it, and a trailing blank line parks the cursor for the reviewer's instruction.
+        let one = comment_on("src/lib.rs", 7, "unwrap can panic");
+        assert_eq!(super::address_prompt(&one), "@src/lib.rs (line 7): unwrap can panic\n\n");
+
+        // A multi-line comment names the range.
+        let mut span = comment_on("a.rs", 3, "extract this");
+        span.end = 5;
+        assert_eq!(super::address_prompt(&span), "@a.rs (line 3-5): extract this\n\n");
+    }
+
+    #[test]
+    fn addressing_with_nothing_targeted_is_inert() {
+        // An empty store has no comment to address, so `a` neither shells out nor panics.
+        let mut app = App::blocked(PathBuf::from("."), Scope::Uncommitted, None);
+        app.focus = crate::Focus::Comments;
+        app.address_comment();
+        assert!(app.store.is_empty());
     }
 }

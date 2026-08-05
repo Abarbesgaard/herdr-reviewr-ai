@@ -96,6 +96,7 @@ Newer content paints over the old in place, reconciling the reviewer's place as 
 ## Related specs
 
 - [review-model](./review-model.md)
+- [ai-review](./ai-review.md)
 - [diff-view](./diff-view.md)
 - [theme](./theme.md)
 - [file-list](./file-list.md)

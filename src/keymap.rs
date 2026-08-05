@@ -29,6 +29,7 @@ pub enum Action {
     Comment,
     Edit,
     Delete,
+    Address,
     NextComment,
     PrevComment,
     Comments,
@@ -84,7 +85,7 @@ impl std::fmt::Display for Key {
 
 /// Every action with its config name and default keys — the single source the default keymap,
 /// the name lookup, and the config error message are built from.
-const ACTIONS: [(Action, &str, &[Key]); 33] = [
+const ACTIONS: [(Action, &str, &[Key]); 34] = [
     (Action::Down, "down", &[Key::plain('j')]),
     (Action::Up, "up", &[Key::plain('k')]),
     (Action::NextHunk, "next-hunk", &[Key::plain(']')]),
@@ -107,6 +108,7 @@ const ACTIONS: [(Action, &str, &[Key]); 33] = [
     (Action::Comment, "comment", &[Key::plain('c')]),
     (Action::Edit, "edit", &[Key::plain('e')]),
     (Action::Delete, "delete", &[Key::plain('d')]),
+    (Action::Address, "address", &[Key::plain('a')]),
     (Action::NextComment, "next-comment", &[Key::plain('n')]),
     (Action::PrevComment, "prev-comment", &[Key::plain('N')]),
     (Action::Comments, "comments", &[Key::plain('l')]),
