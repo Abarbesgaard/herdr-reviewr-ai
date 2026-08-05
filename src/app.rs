@@ -2086,6 +2086,18 @@ impl App {
         match self.focus {
             Focus::Files => {
                 if !self.file_rows.is_empty() {
+                    // The comments rail sits under the file list in the same navigator column.
+                    // A step down off the last file crosses into the rail's first comment, so
+                    // the two lists read as one column and no mouse is needed (`specs/ai-review.md`).
+                    if delta > 0
+                        && self.file_cursor + 1 >= self.file_rows.len()
+                        && self.comments_rail_visible()
+                    {
+                        self.focus = Focus::Comments;
+                        self.list_cursor = 0;
+                        self.reveal_selected_comment();
+                        return Ok(());
+                    }
                     self.file_cursor = step(self.file_cursor, delta, self.file_rows.len());
                     self.open_cursor_file();
                     // Reveal even when the index clamps unchanged (e.g. `k` at the top), so a
@@ -2112,6 +2124,15 @@ impl App {
                 // so the commented line is always on screen — like clicking a PR comment
                 // (`specs/ai-review.md`).
                 if !self.store.is_empty() {
+                    // At the top comment a further step up crosses back into the file list above
+                    // the rail, landing on its last row, so the rail is never a dead end.
+                    if delta < 0 && self.list_cursor == 0 && !self.file_rows.is_empty() {
+                        self.focus = Focus::Files;
+                        self.file_cursor = self.file_rows.len() - 1;
+                        self.open_cursor_file();
+                        self.reveal_files = true;
+                        return Ok(());
+                    }
                     self.list_cursor = step(self.list_cursor, delta, self.store.len());
                     self.reveal_selected_comment();
                 }

@@ -1878,6 +1878,30 @@ fn editing_from_the_list_navigates_to_the_comments_file() {
 }
 
 #[test]
+fn stepping_up_off_the_top_comment_crosses_into_the_file_list() {
+    // The file list and the comments rail share the navigator column, so `k` at the top
+    // comment must not dead-end — it crosses up into the file list's last row, and a `j` off
+    // the last file crosses back down into the rail's first comment. No mouse needed.
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    comment_on(&mut app, '+', "note");
+    assert!(app.comments_rail_visible(), "the rail shows with a comment");
+    assert!(!app.file_rows.is_empty(), "there is at least one file row");
+
+    // Sitting on the top comment, an up-step hands focus to the file list's last row.
+    app.focus = Focus::Comments;
+    app.list_cursor = 0;
+    app.move_cursor(-1).unwrap();
+    assert_eq!(app.focus, Focus::Files, "up off the top comment focuses files");
+    assert_eq!(app.file_cursor, app.file_rows.len() - 1, "landing on the last file row");
+
+    // From that last file row, a down-step crosses back into the rail's first comment.
+    app.move_cursor(1).unwrap();
+    assert_eq!(app.focus, Focus::Comments, "down off the last file focuses the rail");
+    assert_eq!(app.list_cursor, 0, "landing on the first comment");
+}
+
+#[test]
 fn a_comment_on_a_reverted_file_is_flagged_stale() {
     let r = edited_repo();
     let mut app = app_on(&r);

@@ -100,6 +100,10 @@ overlay as the only list surface, which shows the comments over the page rather 
 - Moving the cursor with the rail focused steps its highlight and opens the highlighted comment in
   the diff, landing the diff cursor on the comment's line. The rejected fork is a display-only
   rail, which would make the reviewer find the line by hand.
+- The file list and the rail read as one vertical column: stepping up off the top comment crosses
+  into the file list's last row, and stepping down off the last file crosses into the rail's first
+  comment. So keyboard navigation flows between the two without `tab` or the mouse, and neither
+  list is a dead end.
 - A click on a rail row selects it and reveals it the same way. Editing, deleting, and sending act
   on the highlighted row, as they do in the overlay.
 - Emptying the store returns focus to the diff, since a rail with no rows has nothing to hold.
