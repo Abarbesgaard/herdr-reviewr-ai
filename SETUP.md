@@ -46,6 +46,35 @@ cp skills/review-herdr/SKILL.md ~/.copilot/skills/review-herdr/SKILL.md
    - **`s`** — send the whole comment set to the agent at once.
    - The agent clears a fixed comment by running `herdr-reviewr resolve-herdr <id>`.
 
+## Optional: the `herdr-projects` plugin (prefix+p project picker)
+
+This repo also bundles a small companion herdr plugin under `herdr-projects/`. Press
+**`prefix+p`** to pop up a fuzzy picker of your git projects; pick one and herdr opens a fresh
+workspace with an **agent** pane (left) and a **reviewer** pane (right, the reviewr plugin above).
+See `herdr-projects/README.md` for details and configuration.
+
+```bash
+# Link it as a herdr plugin (from the repo root)
+herdr plugin link ./herdr-projects
+
+# Bind prefix+p to its picker in ~/.config/herdr/config.toml
+cat >> ~/.config/herdr/config.toml <<'TOML'
+
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+description = "open project picker"
+command = "herdr-projects.open"
+TOML
+
+# Reload herdr config
+herdr server reload-config
+```
+
+First run seeds a config at `$(herdr plugin config-dir herdr-projects)/config.sh` — edit that copy
+to set the directories it scans (`ROOTS`), the agent command, and how the reviewer pane is opened.
+Requirements: `herdr`, `fzf` (falls back to a numbered menu), and `jq`.
+
 ## Notes
 
 - Comments are **in-memory only**: closing the reviewr pane drops them. Re-run `review-herdr`
