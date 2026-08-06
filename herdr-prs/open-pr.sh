@@ -2,9 +2,10 @@
 # Check out a chosen PR and open the work workspace for it. Order matters for
 # perceived speed: the workspace is created and focused FIRST (instant), then the
 # slow `gh pr checkout` runs behind the now-visible window, then the reviewer:
-#   1. refuse a dirty tree (fast, local)
+#   1. stash a dirty tree (fast, local) so the checkout can proceed
 #   2. new workspace, cwd = clone, label = "repo #num"  → left pane "agent"
 #   3. gh pr checkout <number>  in the repo's local clone
+#      3b. restore the auto-stash (conflict-safe) onto the PR branch
 #   4. right pane "reviewer" (per $REVIEWER — the persiyanov.reviewr plugin)
 #   5. focus the agent pane and launch $AGENT_CMD
 # The reviewer's PR tab then lands on this very PR, since the branch is checked
@@ -29,11 +30,22 @@ if [[ -z "$path" || ! -d "$path" ]]; then
   exit 1
 fi
 
-# ---- 1. refuse a dirty tree (fast, local) -----------------------------------
-if ! git -C "$path" diff --quiet || ! git -C "$path" diff --cached --quiet; then
-  "$H" notify "herdr-prs: $path has uncommitted changes — not switching branches" 2>/dev/null || true
-  echo "uncommitted changes in $path; refusing to switch" >&2
-  exit 1
+# ---- 1. stash a dirty tree so the checkout can proceed (fast, local) ---------
+# The clone may carry uncommitted work. Rather than refuse (which left the user
+# staring at a row that "did nothing"), stash it — including untracked files —
+# under a labelled ref, switch to the PR, then try to restore it afterwards.
+did_stash=0
+orig_branch="$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if ! git -C "$path" diff --quiet || ! git -C "$path" diff --cached --quiet \
+   || [[ -n "$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+  stash_msg="herdr-prs autostash: ${orig_branch:-detached} $(date +%Y-%m-%dT%H:%M:%S)"
+  if git -C "$path" stash push -u -m "$stash_msg" >/dev/null 2>&1; then
+    did_stash=1
+    "$H" notify "herdr-prs: stashed local changes in ${path##*/} before opening PR #$number" 2>/dev/null || true
+  else
+    "$H" notify "herdr-prs: could not stash ${path##*/}; opening PR #$number without switching branch" 2>/dev/null || true
+    echo "stash failed in $path" >&2
+  fi
 fi
 
 # ---- 2. open the workspace FIRST so it appears instantly ---------------------
@@ -62,6 +74,20 @@ if ! ( cd "$path" && gh pr checkout "$number" --repo "$repo" ) 2>/dev/null; then
     "$H" notify "herdr-prs: gh pr checkout $repo#$number failed" 2>/dev/null || true
     echo "gh pr checkout failed" >&2
   }
+fi
+
+# ---- 3b. restore the auto-stash onto the PR branch (conflict-safe) -----------
+# If we stashed in step 1, try to re-apply it. A clean pop puts the user's work
+# back on top of the PR; a conflicting pop is rolled back (reset --hard) so the
+# PR stays clean for review and the changes remain safe in the stash list.
+if [[ "$did_stash" == 1 ]]; then
+  if git -C "$path" stash pop >/dev/null 2>&1; then
+    "$H" notify "herdr-prs: restored your stashed changes onto PR #$number" 2>/dev/null || true
+  else
+    git -C "$path" reset --hard >/dev/null 2>&1 || true
+    "$H" notify "herdr-prs: your changes conflict with PR #$number — kept safe in the stash. Restore with: git -C $path stash pop" 2>/dev/null || true
+    echo "stash pop conflicted; changes preserved in stash (git -C $path stash list)" >&2
+  fi
 fi
 
 # ---- 4. reviewer pane on the right ------------------------------------------

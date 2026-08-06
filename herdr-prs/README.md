@@ -36,8 +36,11 @@ on a PR and it checks the branch out in your local clone and opens the usual
   **reviewer** pane (right, the `persiyanov.reviewr` plugin by default). Because
   the PR branch is checked out, the reviewer's **PR tab** lands right on it.
 
-The dashboard never writes to your repos beyond `gh pr checkout`, and it refuses
-to switch branches in a clone with uncommitted changes.
+The dashboard never writes to your repos beyond `gh pr checkout`. If the target
+clone has uncommitted work, it is **auto-stashed** (including untracked files)
+before the checkout and restored onto the PR branch afterwards; if that restore
+would conflict, the PR branch is left clean for review and your changes are kept
+safe in the stash (`git -C <clone> stash pop` to recover them).
 
 ## Install (local / development)
 

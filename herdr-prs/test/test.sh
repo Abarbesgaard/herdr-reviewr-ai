@@ -232,6 +232,38 @@ test_openpr() {
   rm -rf "$tmp"
 }
 
+# --- dry-run: open-pr.sh on a DIRTY clone (auto-stash + restore) --------------
+test_openpr_dirty() {
+  echo "openpr-dirty:"
+  local tmp bin log clone; tmp="$(mktemp -d)"; bin="$tmp/bin"; log="$tmp/log"
+  make_fakes "$bin" "$log"
+  clone="$tmp/pling-backend"; mkdir -p "$clone"
+  ( cd "$clone" && git init -q && git config user.email t@t && git config user.name t \
+      && echo base > tracked.txt && git add tracked.txt && git commit -q -m init \
+      && echo mine >> tracked.txt \
+      && echo untracked > new.txt ) >/dev/null 2>&1
+  # Sanity: the tree is dirty before we start (a tracked edit + an untracked file).
+  git -C "$clone" diff --quiet && fail "precondition: clone should be dirty" || pass "clone starts dirty"
+
+  PATH="$bin:$PATH" HERDR_BIN_PATH="$bin/herdr" \
+    bash "$HERE/open-pr.sh" vippsas/pling-backend 42 "$clone" >/dev/null 2>&1
+  local out; out="$(cat "$log")"
+
+  # It must NOT refuse: the workspace still opens on a dirty clone.
+  have "$out" "herdr workspace create --cwd $clone --label pling-backend #42 --focus" \
+    && pass "opens workspace despite dirty clone" || fail "no workspace create on dirty clone"
+  have "$out" "herdr notify herdr-prs: stashed local changes" \
+    && pass "notifies that it stashed" || fail "no stash notice: $out"
+  # gh is stubbed (no branch change), so the pop re-applies cleanly and restores.
+  have "$out" "herdr notify herdr-prs: restored your stashed changes" \
+    && pass "restores the stash after checkout" || fail "no restore notice: $out"
+  # The working changes are back: tracked edit present, untracked file present, no leftover stash.
+  grep -q '^mine$' "$clone/tracked.txt" && pass "tracked edit restored" || fail "tracked edit lost"
+  [[ -f "$clone/new.txt" ]] && pass "untracked file restored" || fail "untracked file lost"
+  [[ -z "$(git -C "$clone" stash list)" ]] && pass "no leftover stash" || fail "stash left behind"
+  rm -rf "$tmp"
+}
+
 # --- dry-run: action-open.sh (create + focus) --------------------------------
 test_action() {
   echo "action:"
@@ -274,12 +306,12 @@ test_lint() {
 case "${1:-all}" in
   render) test_render ;;
   new)    test_new ;;
-  openpr) test_openpr ;;
+  openpr) test_openpr; test_openpr_dirty ;;
   action) test_action ;;
   fetch)  test_fetch ;;
   lazy)   test_lazy ;;
   lint)   test_lint ;;
-  all)    test_render; test_new; test_fetch; test_lazy; test_openpr; test_action; test_lint ;;
+  all)    test_render; test_new; test_fetch; test_lazy; test_openpr; test_openpr_dirty; test_action; test_lint ;;
   *) echo "unknown: $1" >&2; exit 2 ;;
 esac
 
