@@ -35,14 +35,33 @@ fetch_pool() {
 
 # Build fzf rows: field1 = owner/repo (the key), field2 = display with a ● if
 # currently monitored. Owner repos first, then write, then read; each group A→Z.
-rank() { case "$1" in owner) echo 0 ;; write|member) echo 1 ;; read) echo 2 ;; *) echo 3 ;; esac; }
+rank() { case "$1" in owner) echo 1 ;; write|member) echo 2 ;; read) echo 3 ;; *) echo 4 ;; esac; }
 
+# Build the row list. Columns (TAB): sortkey  owner/repo  DISPLAY.
+# Currently-monitored repos are forced to the TOP (sortkey 0) so we can
+# pre-select exactly the first N of them in fzf — that makes the picker
+# ADDITIVE: your existing repos stay checked unless you deselect them.
+# Any monitored repo that isn't in the team pool is kept as a synthetic row
+# so saving never silently drops it.
+pool="$(fetch_pool)"
 rows="$(
-  while IFS=$'\t' read -r role repo; do
-    [[ -z "$repo" ]] && continue
-    mark=" "; grep -qxF "$repo" <<<"$current" && mark="●"
-    printf '%s\t%s\t%s %-6s %s\n' "$(rank "$role")" "$repo" "$mark" "$role" "$repo"
-  done < <(fetch_pool) | sort -t$'\t' -k1,1n -k2,2 | cut -f2,3
+  {
+    while IFS=$'\t' read -r role repo; do
+      [[ -z "$repo" ]] && continue
+      if grep -qxF "$repo" <<<"$current"; then
+        printf '0\t%s\t● %-6s %s\n' "$repo" "$role" "$repo"
+      else
+        printf '%s\t%s\t  %-6s %s\n' "$(rank "$role")" "$repo" "$role" "$repo"
+      fi
+    done <<<"$pool"
+    # Monitored repos absent from the pool → keep them (marked, at the top).
+    pool_repos="$(cut -f2 <<<"$pool")"
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      grep -qxF "$repo" <<<"$pool_repos" || \
+        printf '0\t%s\t● %-6s %s\n' "$repo" "kept" "$repo"
+    done <<<"$current"
+  } | sort -t$'\t' -k1,1n -k2,2 | cut -f2,3
 )"
 
 if [[ -z "$rows" ]]; then
@@ -50,13 +69,21 @@ if [[ -z "$rows" ]]; then
   exit 1
 fi
 
-header=$'● = currently monitored   ·   Tab: toggle   ·   Enter: save   ·   Esc: cancel'
+# How many monitored rows sit at the top → pre-select the first N.
+ncur="$(grep -cE $'\t● ' <<<"$rows" || true)"
+preselect="pos(1)"
+for (( n=0; n<ncur; n++ )); do preselect="$preselect+select+down"; done
+
+header=$'● = monitored (pre-checked)   ·   j/k or ↑/↓: move   ·   space/tab: add·remove   ·   ctrl-a/ctrl-d: all/none   ·   ENTER: save   ·   esc: cancel'
 selected="$(
   printf '%s\n' "$rows" \
-  | fzf --multi --ansi --layout=reverse --info=inline \
+  | fzf --multi --ansi --layout=reverse --info=inline --sync \
         --delimiter='\t' --with-nth='2' \
+        --marker='●' --pointer='▸' \
         --prompt='repos ▸ ' --header="$header" --header-first \
-        --bind 'ctrl-a:select-all,ctrl-d:deselect-all' \
+        --bind 'j:down,k:up,g:first,G:last,ctrl-d:deselect-all,ctrl-a:select-all' \
+        --bind 'space:toggle+down,tab:toggle+down,shift-tab:toggle+up' \
+        --bind "start:${preselect}+first" \
   | cut -f1
 )" || { echo "Cancelled — repos.conf unchanged." >&2; exit 0; }
 

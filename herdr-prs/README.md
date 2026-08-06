@@ -90,10 +90,17 @@ that copy:
 ## Choosing which repos to monitor
 
 Press **`ctrl-e`** in the dashboard to open the repo picker: it lists every repo
-in `PICK_ORG`/`PICK_TEAM` (owner → write → read), pre-marks the ones you already
-watch with `●`, and writes your selection back to `repos.conf`. `Tab` toggles a
-repo, `ctrl-a`/`ctrl-d` select/deselect all, `Enter` saves, `Esc` cancels. Local
-clone paths are resolved automatically. You can also run it directly:
+in `PICK_ORG`/`PICK_TEAM` (owner → write → read), **pre-checks the ones you
+already monitor** (`●`, floated to the top), and writes your selection back to
+`repos.conf`. It's additive — your current repos stay checked unless you remove
+them, and any monitored repo outside the pool is kept.
+
+- `j`/`k` or `↑`/`↓` — move       · `g`/`G` — top/bottom
+- `space` or `tab` — add/remove a repo (moves down, so you can pick many in a row)
+- `ctrl-a`/`ctrl-d` — select all / none
+- `Enter` — save · `Esc` — cancel (leaves `repos.conf` untouched)
+
+Local clone paths are resolved automatically. You can also run it directly with
 `bash pick-repos.sh`, or just hand-edit `repos.conf`.
 
 ## Keys
