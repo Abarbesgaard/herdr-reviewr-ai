@@ -7,7 +7,7 @@ in the terminal, before you commit or push. Address a comment straight into the 
 the noise, and let the agent resolve what it fixes.
 
 <p align="center">
-  <a href="#install">install</a> · <a href="#use">use</a> · <a href="#controls">controls</a> · <a href="#herdr-projects">projects picker</a> · <a href="#how-it-works">how it works</a> · <a href="#notes--limitations">notes</a>
+  <a href="#install">install</a> · <a href="#use">use</a> · <a href="#controls">controls</a> · <a href="#herdr-projects">projects picker</a> · <a href="#herdr-prs">PR dashboard</a> · <a href="#how-it-works">how it works</a> · <a href="#notes--limitations">notes</a>
 </p>
 
 ## Install
@@ -102,6 +102,38 @@ First run seeds a config at `$(herdr plugin config-dir herdr-projects)/config.sh
 to set the directories it scans (`ROOTS`), the agent command, and how the reviewer pane is opened.
 Requirements: `herdr`, `fzf` (falls back to a numbered menu), and `jq`. See
 [`herdr-projects/README.md`](herdr-projects/README.md) for the full reference.
+
+## herdr-prs
+
+Also bundled: [`herdr-prs/`](herdr-prs/), a **persistent PR dashboard**. One hotkey jumps you to a
+dedicated `PRs` workspace listing every open pull request across your chosen repos, **oldest at
+the top**, auto-refreshing. Press **Enter** on a PR and it runs `gh pr checkout` in your local
+clone and opens the same **agent + reviewer** work workspace — so the reviewer's PR tab lands
+right on it and you can start working.
+
+```bash
+# Link it as a herdr plugin (from the repo root)
+herdr plugin link ./herdr-prs
+
+# Bind prefix+r to the dashboard in ~/.config/herdr/config.toml
+cat >> ~/.config/herdr/config.toml <<'TOML'
+
+[[keys.command]]
+key = "prefix+r"
+type = "plugin_action"
+description = "open PR dashboard"
+command = "herdr-prs.open"
+TOML
+
+# Reload herdr config
+herdr server reload-config
+```
+
+The repos it watches live in [`herdr-prs/repos.conf`](herdr-prs/repos.conf) (one `owner/repo` per
+line, optional TAB + local path), seeded with your locally-cloned team repos. Behaviour
+(`INTERVAL`, `AGENT_CMD`, `REVIEWER`, …) is a seeded `config.sh` in the plugin config dir.
+Requirements: `herdr`, `gh` (authenticated), `fzf`, `jq`, `git`. See
+[`herdr-prs/README.md`](herdr-prs/README.md) for the full reference.
 
 ## How it works
 

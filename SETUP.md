@@ -75,6 +75,36 @@ First run seeds a config at `$(herdr plugin config-dir herdr-projects)/config.sh
 to set the directories it scans (`ROOTS`), the agent command, and how the reviewer pane is opened.
 Requirements: `herdr`, `fzf` (falls back to a numbered menu), and `jq`.
 
+## Optional: the `herdr-prs` plugin (PR dashboard)
+
+This repo also bundles `herdr-prs/`, a persistent **PR dashboard**: a dedicated `PRs` workspace
+(jumped to with a hotkey) that lists every open pull request across your chosen repos, oldest
+first, auto-refreshing. Press **Enter** on a PR and it runs `gh pr checkout` in your local clone
+and opens the same agent + reviewer work workspace, so the reviewer's PR tab lands on it.
+
+```bash
+# Link it as a herdr plugin (from the repo root)
+herdr plugin link ./herdr-prs
+
+# Bind prefix+r to the dashboard in ~/.config/herdr/config.toml
+cat >> ~/.config/herdr/config.toml <<'TOML'
+
+[[keys.command]]
+key = "prefix+r"
+type = "plugin_action"
+description = "open PR dashboard"
+command = "herdr-prs.open"
+TOML
+
+# Reload herdr config
+herdr server reload-config
+```
+
+Edit `herdr-prs/repos.conf` to choose the repos (one `owner/repo` per line, optional TAB + local
+path; seeded with your locally-cloned team repos). Behaviour lives in a seeded
+`$(herdr plugin config-dir herdr-prs)/config.sh` (`INTERVAL`, `AGENT_CMD`, `REVIEWER`, …).
+Requirements: `herdr`, `gh` (authenticated), `fzf`, `jq`, `git`. See `herdr-prs/README.md`.
+
 ## Notes
 
 - Comments are **in-memory only**: closing the reviewr pane drops them. Re-run `review-herdr`
