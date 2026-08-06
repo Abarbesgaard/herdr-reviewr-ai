@@ -21,7 +21,7 @@ while true; do
       --prompt='PR ▸ ' --header="$header" --header-first \
       --bind 'j:down,k:up,g:first,G:last,ctrl-d:half-page-down,ctrl-u:half-page-up' \
       --bind "start:reload(bash $HERE/gen.sh)" \
-      --bind "load:reload(sleep ${INTERVAL}; bash $HERE/gen.sh)" \
+      --bind "load:reload(bash $HERE/gen.sh --loop)" \
       --bind "ctrl-r:reload(bash $HERE/gen.sh)" \
       --bind "ctrl-e:execute(bash $HERE/pick-repos.sh)+reload(bash $HERE/gen.sh)" \
       --bind "enter:execute-silent(bash $HERE/open-pr.sh {1} {2} {3})" \

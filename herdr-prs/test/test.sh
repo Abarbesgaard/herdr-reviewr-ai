@@ -44,7 +44,11 @@ test_render() {
   d1="$(sed -n 1p <<<"$out" | cut -f5)"; d2="$(sed -n 2p <<<"$out" | cut -f5)"; d3="$(sed -n 3p <<<"$out" | cut -f5)"
   have "$d1" "✓" && have "$d1" "approved"      && have "$d1" "4d" && pass "row1 ✓/approved/4d"      || fail "row1 display: $d1"
   have "$d2" "✗" && have "$d2" "review-needed" && have "$d2" "1d" && pass "row2 ✗/review-needed/1d" || fail "row2 display: $d2"
-  have "$d3" "•" && have "$d3" "changes"       && have "$d3" "1h" && pass "row3 •/changes/1h"       || fail "row3 display: $d3"
+  have "$d3" "●" && have "$d3" "changes"       && have "$d3" "1h" && pass "row3 ●/changes/1h"       || fail "row3 display: $d3"
+  # CI glyphs are ANSI-colored: green ✓, red ✗, yellow ●, grey ·.
+  have "$d1" $'\033[1;32m' && pass "CI ✓ is green" || fail "row1 CI not green: $(cat -v <<<"$d1")"
+  have "$d2" $'\033[1;31m' && pass "CI ✗ is red"   || fail "row2 CI not red: $(cat -v <<<"$d2")"
+  have "$d3" $'\033[1;33m' && pass "CI ● is yellow" || fail "row3 CI not yellow: $(cat -v <<<"$d3")"
 }
 
 # --- pure: NEW marking -------------------------------------------------------
@@ -112,6 +116,56 @@ EOF
       fail "missing $r in merged output"
     fi
   done
+  rm -rf "$tmp"
+}
+
+# --- lazy CI: cache merge + parallel state fetch -----------------------------
+test_lazy() {
+  echo "lazy:"
+  # shellcheck source=../lib.sh
+  source "$HERE/lib.sh"; prs_load_config
+  export SPIN_FRAME="SPIN"
+
+  # A list of 3 PRs; the cache knows CI for #1 (green) and #2 (red) only.
+  local list cache out
+  list='[{"repo":"vippsas/a","number":1,"title":"ok","author":{"login":"x"},"createdAt":"2026-08-01T00:00:00Z"},{"repo":"vippsas/a","number":2,"title":"bad","author":{"login":"y"},"createdAt":"2026-08-02T00:00:00Z"},{"repo":"vippsas/a","number":3,"title":"pending","author":{"login":"z"},"createdAt":"2026-08-03T00:00:00Z"}]'
+  cache="$(mktemp)"
+  printf 'vippsas/a#1\tSUCCESS\nvippsas/a#2\tFAILURE\n' > "$cache"
+
+  # prs_ci_merge: cached PRs get a concrete rollup; absent PRs get .ci_loading.
+  local merged
+  merged="$(printf '%s' "$list" | prs_ci_merge "$cache")"
+  jq -e '.[0].statusCheckRollup[0].conclusion == "SUCCESS"' <<<"$merged" >/dev/null \
+    && pass "cached SUCCESS folded into rollup" || fail "row1 rollup not SUCCESS"
+  jq -e '.[1].statusCheckRollup[0].conclusion == "FAILURE"' <<<"$merged" >/dev/null \
+    && pass "cached FAILURE folded into rollup" || fail "row2 rollup not FAILURE"
+  jq -e '.[2].ci_loading == true' <<<"$merged" >/dev/null \
+    && pass "uncached PR marked ci_loading" || fail "row3 not marked ci_loading"
+
+  # Rendered glyphs: green ✓, red ✗, dim spinner for the loading one.
+  out="$(printf '%s' "$merged" | prs_render_rows)"
+  local d1 d2 d3
+  d1="$(sed -n 1p <<<"$out" | cut -f5)"; d2="$(sed -n 2p <<<"$out" | cut -f5)"; d3="$(sed -n 3p <<<"$out" | cut -f5)"
+  have "$d1" $'\033[1;32m' && pass "cached green glyph renders" || fail "row1 not green: $(cat -v <<<"$d1")"
+  have "$d2" $'\033[1;31m' && pass "cached red glyph renders"   || fail "row2 not red: $(cat -v <<<"$d2")"
+  have "$d3" $'\033[2mSPIN' && pass "loading PR shows dim spinner" || fail "row3 no spinner: $(cat -v <<<"$d3")"
+  rm -f "$cache"
+
+  # prs_ci_states: fetches CI per repo in parallel, emits repo#num<TAB>STATE.
+  local tmp bin repos
+  tmp="$(mktemp -d)"; bin="$tmp/bin"; mkdir -p "$bin"
+  cat > "$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+repo=""
+while [[ $# -gt 0 ]]; do [[ "$1" == "--repo" ]] && { repo="$2"; shift; }; shift; done
+printf '[{"number":5,"statusCheckRollup":[{"conclusion":"SUCCESS"}]}]\n'
+EOF
+  chmod +x "$bin/gh"
+  repos="$tmp/repos.conf"; printf 'vippsas/a\t/tmp/a\n' > "$repos"
+  local states
+  states="$(PATH="$bin:$PATH" REPOS_FILE="$repos" HERE="$HERE" bash -c 'source "$HERE/lib.sh"; prs_load_config; prs_ci_states')"
+  have "$states" $'vippsas/a#5\tSUCCESS' && pass "prs_ci_states emits repo#num<TAB>STATE" \
+    || fail "ci_states output: $(cat -v <<<"$states")"
   rm -rf "$tmp"
 }
 
@@ -223,8 +277,9 @@ case "${1:-all}" in
   openpr) test_openpr ;;
   action) test_action ;;
   fetch)  test_fetch ;;
+  lazy)   test_lazy ;;
   lint)   test_lint ;;
-  all)    test_render; test_new; test_fetch; test_openpr; test_action; test_lint ;;
+  all)    test_render; test_new; test_fetch; test_lazy; test_openpr; test_action; test_lint ;;
   *) echo "unknown: $1" >&2; exit 2 ;;
 esac
 

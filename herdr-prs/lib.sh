@@ -63,15 +63,17 @@ prs_resolve_path() {
 # Fetch open, non-draft PRs for one repo, tagging each with its repo + local path.
 # Emits a JSON array (possibly empty). Network — not unit-tested.
 #
-# By default we fetch only the CHEAP fields. The two rich columns — CI status
-# (statusCheckRollup) and review decision (reviewDecision) — each cost gh a
-# per-PR round-trip and make the whole dashboard ~8x slower, so they are OFF
-# unless PRS_RICH=1. Without them the renderer shows "·" for CI and "—" for
-# review; everything else (repo, number, title, author, age, ★) is unchanged.
+# This is the CHEAP fetch — no statusCheckRollup. The CI pipeline glyph is loaded
+# LAZILY: the list paints immediately from this, and prs_ci_states (below) fills a
+# cache in the background that prs_ci_merge folds back in on the next repaint.
+# reviewDecision is the one optional inline field (PRS_REVIEW, off by default);
+# its cost scales with a repo's open-PR count.
 prs_fetch_one() {
   local repo="$1" path="$2"
   local fields="number,title,author,createdAt,isDraft"
-  [[ "${PRS_RICH:-0}" == 1 ]] && fields="$fields,reviewDecision,statusCheckRollup"
+  if [[ "${PRS_RICH:-0}" == 1 || "${PRS_REVIEW:-0}" == 1 ]]; then
+    fields="$fields,reviewDecision"
+  fi
   gh pr list --repo "$repo" --state open --limit 100 \
     --json "$fields" \
     2>/dev/null \
@@ -99,6 +101,65 @@ prs_fetch_all() {
   rm -rf "$tmp"
 }
 
+# --- lazy CI enrichment ------------------------------------------------------
+# The CI pipeline glyph comes from statusCheckRollup, the one field whose gh cost
+# grows with a repo's open-PR count. To keep the first paint instant we fetch it
+# OUT OF BAND: prs_ci_states writes a small cache (repo#num<TAB>STATE), and
+# prs_ci_merge folds that cache into the cheap PR array so the renderer colours
+# the glyph. STATE is the reduced rollup: FAILURE / PENDING / SUCCESS / NONE.
+
+# The reducer: a statusCheckRollup array → one STATE word. Mirrors the renderer's
+# precedence (any failure ⇒ FAILURE, else any pending/unknown ⇒ PENDING, …).
+_PRS_CI_STATE='
+  ([ (. // [])[] | (.conclusion // .state // .status) ]) as $c
+  | if   ($c | length) == 0 then "NONE"
+    elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then "FAILURE"
+    elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then "PENDING"
+    else "SUCCESS" end'
+
+# prs_ci_states : for every configured repo, emit "repo#num<TAB>STATE" lines.
+# Network + slow (this is the deferred cost). Fetched in parallel like the list.
+prs_ci_states() {
+  local repo path tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/herdr-prs-ci.XXXXXX")" || return 1
+  local -i i=0 max="${PRS_FETCH_PARALLEL:-8}"
+  while IFS=$'\t' read -r repo path; do
+    [[ -z "$repo" ]] && continue
+    {
+      gh pr list --repo "$repo" --state open --limit 100 \
+        --json number,statusCheckRollup 2>/dev/null \
+      | jq -r --arg repo "$repo" \
+          ".[] | \"\(\$repo)#\(.number)\t\" + (.statusCheckRollup | $_PRS_CI_STATE)"
+    } >"$tmp/$i.txt" &
+    i+=1
+    if (( i % max == 0 )); then wait; fi
+  done < <(prs_repos)
+  wait
+  cat "$tmp"/*.txt 2>/dev/null
+  rm -rf "$tmp"
+}
+
+# prs_ci_merge <cachefile> : stdin = cheap PR array → same array annotated for the
+# renderer's CI glyph. A PR present in the cache gets a synthetic .statusCheckRollup
+# rebuilt from its cached STATE; a PR NOT yet in the cache is marked .ci_loading so
+# the renderer shows the spinner. An empty/missing cache = everything is loading.
+prs_ci_merge() {
+  local cache="${1:-}"
+  local map='{}'
+  if [[ -n "$cache" && -s "$cache" ]]; then
+    map="$(jq -R -s 'split("\n") | map(select(length>0) | split("\t")) | map({(.[0]): .[1]}) | add // {}' < "$cache")"
+  fi
+  jq -c --argjson map "$map" '
+    map(. as $pr
+      | ("\(.repo)#\(.number)") as $k
+      | ($map[$k]) as $st
+      | if   $st == null      then .ci_loading = true
+        elif $st == "NONE"    then .
+        elif $st == "FAILURE" then .statusCheckRollup = [{"conclusion":"FAILURE"}]
+        elif $st == "PENDING" then .statusCheckRollup = [{"status":"PENDING"}]
+        else                       .statusCheckRollup = [{"conclusion":"SUCCESS"}] end)'
+}
+
 # --- rendering (pure) --------------------------------------------------------
 
 # The jq program that turns the combined PR array into fzf TSV rows, oldest first.
@@ -111,12 +172,16 @@ def age($created):
     elif $s < 3600  then "\(($s/60)   | floor)m"
     elif $s < 86400 then "\(($s/3600) | floor)h"
     else                 "\(($s/86400)| floor)d" end;
-def ci($rollup):
-  ([ ($rollup // [])[] | (.conclusion // .state // .status) ]) as $c
-  | if   ($c | length) == 0 then "·"
-    elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then "✗"
-    elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then "•"
-    else "✓" end;
+def ci($rollup; $loading):
+  if $loading then "\u001b[2m\($spin)\u001b[0m"
+  else
+    ([ ($rollup // [])[] | (.conclusion // .state // .status) ]) as $c
+    | (if   ($c | length) == 0 then ["90","·"]
+       elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then ["31","✗"]
+       elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then ["33","●"]
+       else ["32","✓"] end) as $g
+    | "\u001b[1;\($g[0])m\($g[1])\u001b[0m"
+  end;
 def review($d):
   if $d == null then "—"
   else {"APPROVED":"approved","CHANGES_REQUESTED":"changes","REVIEW_REQUIRED":"review-needed"}[$d] // "—" end;
@@ -131,7 +196,7 @@ sort_by(.createdAt)[]
       + pad(.title; 60) + "  @"
       + pad(.author.login; 20) + " "
       + pad("[" + review(.reviewDecision) + "]"; 16) + " "
-      + ci(.statusCheckRollup) + "  "
+      + ci(.statusCheckRollup; (.ci_loading // false)) + "  "
       + age(.createdAt)
     )
   ] | @tsv
@@ -144,7 +209,7 @@ prs_render_rows() {
   if [[ -n "$seen_file" && -f "$seen_file" ]]; then
     seen="$(jq -R -s 'split("\n") | map(select(length>0))' < "$seen_file")"
   fi
-  jq -r --argjson now "$now" --argjson seen "$seen" "$_PRS_JQ"
+  jq -r --argjson now "$now" --argjson seen "$seen" --arg spin "${SPIN_FRAME:-⋯}" "$_PRS_JQ"
 }
 
 # prs_keys : stdin = combined PR JSON array → "repo#num" keys, one per line.

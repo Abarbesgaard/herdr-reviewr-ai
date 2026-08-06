@@ -17,10 +17,22 @@ ROOTS=(
 # Auto-refresh cadence for the live list, in seconds.
 : "${INTERVAL:=60}"
 
-# Rich columns (CI status + review decision) cost a per-PR round-trip and make
-# the dashboard ~8x slower. Off by default: CI shows "·", review shows "—".
-# Set to 1 to fetch them (slower).
+# CI pipeline glyph (green ✓ / yellow ● / red ✗ / grey ·) from statusCheckRollup.
+# On by default and loaded LAZILY: the list appears at once with a spinner where
+# CI isn't known yet, and a background job fills it in. Set to 0 to drop it.
+: "${PRS_CI:=1}"
+
+# Spinner cadence (seconds) while CI is still loading — how fast it animates.
+: "${SPIN_INTERVAL:=0.5}"
+
+# Review-decision label ([approved] / [changes] / [review-needed]). Off by
+# default; unlike CI it's fetched INLINE, so turning it on slows the first paint
+# on repos with many open PRs. Set to 1 to show it.
+: "${PRS_REVIEW:=0}"
+
+# Legacy master switch — 1 forces both PRS_CI and PRS_REVIEW on.
 : "${PRS_RICH:=0}"
+if [[ "$PRS_RICH" == 1 ]]; then PRS_CI=1; PRS_REVIEW=1; fi
 
 # How many repos to query in parallel. Higher = faster, more concurrent gh calls.
 : "${PRS_FETCH_PARALLEL:=8}"
