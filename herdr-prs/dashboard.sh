@@ -15,8 +15,17 @@ header=$'★ = new since last visit   ·   j/k or ↑/↓: move   ·   g/G: top/
 # {5}=display. Show only the display column; act on the hidden 1..3 on Enter.
 # The load→sleep→reload chain keeps the current list on screen while it waits,
 # then repaints — a self-perpetuating refresh loop.
+
+# The dashboard owns the whole pane, so neutralise any global --height/--border
+# from the user's FZF_DEFAULT_OPTS: --height forces fzf's inline mode (no
+# alt-screen) and with a --border the reload loop leaves ghost top-border rows
+# (╭───╮) stacking up the pane on every repaint. Keep the user's colours; drop
+# only the two layout-breakers so fzf runs full-window on the alternate screen.
+export FZF_DEFAULT_OPTS="$(printf '%s' "${FZF_DEFAULT_OPTS:-}" \
+  | sed -E 's/--height[=[:space:]]+[0-9]+%?//g; s/--border(=[a-z-]+)?//g')"
+
 while true; do
-  fzf --ansi --no-sort --layout=reverse --info=inline \
+  fzf --ansi --no-sort --border=none --layout=reverse --info=inline \
       --delimiter='\t' --with-nth='5..' \
       --prompt='PR ▸ ' --header="$header" --header-first \
       --bind 'j:down,k:up,g:first,G:last,ctrl-d:half-page-down,ctrl-u:half-page-up' \
