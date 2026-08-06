@@ -96,7 +96,7 @@ that copy:
 | `ROOTS`     | Directories scanned to resolve a repo with no explicit path.  |
 | `INTERVAL`  | Auto-refresh cadence in seconds (default `60`).               |
 | `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background (a dim `·` placeholder until it lands). `0` drops it (always `·`). |
-| `PRS_REVIEW`| `1` shows the review-decision label. Default `0` (`—`). Unlike CI this is fetched inline, so it slows the first paint on busy repos. |
+| `PRS_REVIEW`| `1` (default) shows the review-decision label. `0` drops it (rows show `—`). Unlike CI this is fetched inline, so it can slow the first paint on busy repos. |
 | `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |
 | `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |
 | `PICK_ORG` / `PICK_TEAM` | The `ctrl-e` picker's pool: a team's repos, or (empty team) every repo you can see in the org. |

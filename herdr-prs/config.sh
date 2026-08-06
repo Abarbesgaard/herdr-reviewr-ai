@@ -23,10 +23,10 @@ ROOTS=(
 # the next refresh). Set to 0 to drop it.
 : "${PRS_CI:=1}"
 
-# Review-decision label ([approved] / [changes] / [review-needed]). Off by
-# default; unlike CI it's fetched INLINE, so turning it on slows the first paint
-# on repos with many open PRs. Set to 1 to show it.
-: "${PRS_REVIEW:=0}"
+# Review-decision label ([approved] / [changes] / [review-needed]). On by
+# default. Unlike CI it's fetched INLINE, so it can slow the first paint on repos
+# with many open PRs — set to 0 to drop it (rows then show [—]).
+: "${PRS_REVIEW:=1}"
 
 # Legacy master switch — 1 forces both PRS_CI and PRS_REVIEW on.
 : "${PRS_RICH:=0}"
