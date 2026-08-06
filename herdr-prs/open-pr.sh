@@ -52,8 +52,12 @@ fi
 "$H" pane rename "$agent_pane" "agent" >/dev/null 2>&1 || true
 
 # ---- 3. check out the PR branch (the slow bit, now behind a visible window) --
-if ! gh pr checkout "$number" --repo "$repo" 2>/dev/null; then
-  # Fall back to running inside the clone (older gh without --repo on checkout).
+# `gh pr checkout` acts on the CURRENT git repo, so it MUST run inside the clone
+# — otherwise it checks out into whatever dir the dashboard happened to sit in
+# (or fails), the clone stays on its old branch, and the reviewer, which resolves
+# the PR from the checked-out branch name, shows nothing.
+if ! ( cd "$path" && gh pr checkout "$number" --repo "$repo" ) 2>/dev/null; then
+  # Fall back without --repo (older gh where checkout rejects the flag).
   ( cd "$path" && gh pr checkout "$number" ) || {
     "$H" notify "herdr-prs: gh pr checkout $repo#$number failed" 2>/dev/null || true
     echo "gh pr checkout failed" >&2

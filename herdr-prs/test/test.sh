@@ -121,7 +121,7 @@ make_fakes() {   # $1 = bindir, $2 = logfile
   mkdir -p "$bin"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
-echo "gh \$*" >> "$log"
+echo "gh \$* [cwd=\$PWD]" >> "$log"
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then echo "[]"; fi
 exit 0
 EOF
@@ -158,6 +158,10 @@ test_openpr() {
   local out; out="$(cat "$log")"
 
   have "$out" "gh pr checkout 42 --repo vippsas/pling-backend" && pass "checks out the PR branch" || fail "no checkout in log"
+  # The fix: checkout must run INSIDE the clone, else the branch never lands and
+  # the reviewer (which resolves the PR from the checked-out branch) shows nothing.
+  have "$out" "pr checkout 42 --repo vippsas/pling-backend [cwd=$clone]" \
+    && pass "checkout runs inside the clone" || fail "checkout not run in \$path ($clone)"
   have "$out" "herdr workspace create --cwd $clone --label pling-backend #42 --focus" && pass "creates labelled workspace" || fail "no workspace create"
   # Perceived-latency fix: the workspace must be created BEFORE the slow checkout.
   local ws_ln co_ln
