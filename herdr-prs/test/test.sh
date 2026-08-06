@@ -70,6 +70,16 @@ test_new() {
   local all; all="$(prs_render_rows < "$FIX/prs.json")"
   local stars; stars="$(cut -f5 <<<"$all" | cut -c1 | grep -c '★' || true)"
   [[ "$stars" == 3 ]] && pass "no baseline ⇒ all new" || fail "expected 3 stars, got $stars"
+
+  # Fast mode: PRs missing reviewDecision/statusCheckRollup must render, not crash.
+  local lean; lean='[{"number":9,"title":"lean","author":{"login":"z"},"createdAt":"2026-08-01T00:00:00Z","isDraft":false,"repo":"vippsas/lean","localpath":"/tmp/l"}]'
+  local lout rc
+  lout="$(prs_render_rows <<<"$lean" 2>&1)"; rc=$?
+  if [[ $rc == 0 ]] && have "$lout" "[—]" && have "$lout" "·"; then
+    pass "renders PRs with no CI/review fields (fast mode)"
+  else
+    fail "fast-mode render failed (rc=$rc): $lout"
+  fi
 }
 
 # --- fetch: prs_fetch_all combines all repos (guards parallel fetch) ---------

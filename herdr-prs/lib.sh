@@ -62,10 +62,18 @@ prs_resolve_path() {
 
 # Fetch open, non-draft PRs for one repo, tagging each with its repo + local path.
 # Emits a JSON array (possibly empty). Network — not unit-tested.
+#
+# By default we fetch only the CHEAP fields. The two rich columns — CI status
+# (statusCheckRollup) and review decision (reviewDecision) — each cost gh a
+# per-PR round-trip and make the whole dashboard ~8x slower, so they are OFF
+# unless PRS_RICH=1. Without them the renderer shows "·" for CI and "—" for
+# review; everything else (repo, number, title, author, age, ★) is unchanged.
 prs_fetch_one() {
   local repo="$1" path="$2"
+  local fields="number,title,author,createdAt,isDraft"
+  [[ "${PRS_RICH:-0}" == 1 ]] && fields="$fields,reviewDecision,statusCheckRollup"
   gh pr list --repo "$repo" --state open --limit 100 \
-    --json number,title,author,createdAt,isDraft,reviewDecision,statusCheckRollup \
+    --json "$fields" \
     2>/dev/null \
   | jq -c --arg repo "$repo" --arg lp "$path" \
       'map(select(.isDraft|not) | .repo=$repo | .localpath=$lp)'
@@ -110,7 +118,8 @@ def ci($rollup):
     elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then "•"
     else "✓" end;
 def review($d):
-  {"APPROVED":"approved","CHANGES_REQUESTED":"changes","REVIEW_REQUIRED":"review-needed"}[$d] // "—";
+  if $d == null then "—"
+  else {"APPROVED":"approved","CHANGES_REQUESTED":"changes","REVIEW_REQUIRED":"review-needed"}[$d] // "—" end;
 def pad($s; $n): ($s + (" " * ($n - ($s|length)))) | .[0:$n];
 sort_by(.createdAt)[]
 | ("\(.repo)#\(.number)") as $key

@@ -80,9 +80,21 @@ that copy:
 | `REPOS_FILE`| Path to the repo list (default: `repos.conf` beside the plugin).|
 | `ROOTS`     | Directories scanned to resolve a repo with no explicit path.  |
 | `INTERVAL`  | Auto-refresh cadence in seconds (default `60`).               |
+| `PRS_RICH`  | `1` to fetch CI status + review decision (≈8× slower). Default `0` — CI shows `·`, review shows `—`. |
+| `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |
+| `PICK_ORG` / `PICK_TEAM` | The `ctrl-e` picker's pool: a team's repos, or (empty team) every repo you can see in the org. |
 | `WS_LABEL`  | Label of the dashboard workspace (default `PRs`).            |
 | `AGENT_CMD` | Command run in the left **agent** pane of the work workspace. |
 | `REVIEWER`  | The right pane: `plugin:<id>:<entrypoint>`, `cmd:<line>`, or `shell`. |
+
+## Choosing which repos to monitor
+
+Press **`ctrl-e`** in the dashboard to open the repo picker: it lists every repo
+in `PICK_ORG`/`PICK_TEAM` (owner → write → read), pre-marks the ones you already
+watch with `●`, and writes your selection back to `repos.conf`. `Tab` toggles a
+repo, `ctrl-a`/`ctrl-d` select/deselect all, `Enter` saves, `Esc` cancels. Local
+clone paths are resolved automatically. You can also run it directly:
+`bash pick-repos.sh`, or just hand-edit `repos.conf`.
 
 ## Keys
 
@@ -93,6 +105,7 @@ that copy:
 | `ctrl-d`/`ctrl-u` | half-page down / up                            |
 | type text     | filter the list                                    |
 | `enter`       | check out the PR and open its work workspace       |
+| `ctrl-e`      | pick which repos to monitor                        |
 | `ctrl-r`      | refresh now                                        |
 | `ctrl-o`      | open the PR on GitHub                              |
 | `esc`         | hide (the dashboard pane stays live)               |
