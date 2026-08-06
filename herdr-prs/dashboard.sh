@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 prs_load_config
 
-header=$'★ = new since last visit   ·   enter: check out & open work workspace   ·   ctrl-r: refresh   ·   ctrl-o: open on GitHub   ·   esc: hide'
+header=$'★ = new since last visit   ·   j/k or ↑/↓: move   ·   g/G: top/bottom   ·   enter: check out & open work   ·   ctrl-r: refresh   ·   ctrl-o: GitHub   ·   type to filter   ·   esc: hide'
 
 # fzf columns are TAB-delimited: {1}=repo {2}=number {3}=localpath {4}=createdAt
 # {5}=display. Show only the display column; act on the hidden 1..3 on Enter.
@@ -19,6 +19,7 @@ while true; do
   fzf --ansi --no-sort --layout=reverse --info=inline \
       --delimiter='\t' --with-nth='5..' \
       --prompt='PR ▸ ' --header="$header" --header-first \
+      --bind 'j:down,k:up,g:first,G:last,ctrl-d:half-page-down,ctrl-u:half-page-up' \
       --bind "start:reload(bash $HERE/gen.sh)" \
       --bind "load:reload(sleep ${INTERVAL}; bash $HERE/gen.sh)" \
       --bind "ctrl-r:reload(bash $HERE/gen.sh)" \

@@ -72,6 +72,39 @@ test_new() {
   [[ "$stars" == 3 ]] && pass "no baseline ⇒ all new" || fail "expected 3 stars, got $stars"
 }
 
+# --- fetch: prs_fetch_all combines all repos (guards parallel fetch) ---------
+test_fetch() {
+  echo "fetch:"
+  # shellcheck source=../lib.sh
+  source "$HERE/lib.sh"
+  local tmp bin repos; tmp="$(mktemp -d)"; bin="$tmp/bin"; mkdir -p "$bin"
+  # A gh stub that returns one open PR per repo, echoing the repo in the title
+  # so we can prove each configured repo was fetched and merged.
+  cat > "$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+repo=""
+while [[ $# -gt 0 ]]; do [[ "$1" == "--repo" ]] && { repo="$2"; shift; }; shift; done
+n=$(( ( ${#repo} % 900 ) + 1 ))
+printf '[{"number":%d,"title":"from %s","author":{"login":"x"},"createdAt":"2026-01-01T00:00:00Z","isDraft":false,"reviewDecision":null,"statusCheckRollup":[]}]\n' "$n" "$repo"
+EOF
+  chmod +x "$bin/gh"
+  repos="$tmp/repos.conf"
+  printf 'vippsas/alpha\t/tmp/a\nvippsas/beta\t/tmp/b\nvippsas/gamma\t/tmp/c\n' > "$repos"
+
+  local out cnt
+  out="$(PATH="$bin:$PATH" REPOS_FILE="$repos" HERE="$HERE" bash -c 'source "$HERE/lib.sh"; prs_load_config; prs_fetch_all')"
+  cnt="$(jq 'length' <<<"$out")"
+  [[ "$cnt" == 3 ]] && pass "three repos merged into one array" || fail "expected 3 PRs, got $cnt"
+  for r in alpha beta gamma; do
+    if jq -e --arg r "$r" 'any(.title == "from vippsas/\($r)")' <<<"$out" >/dev/null; then
+      pass "includes $r"
+    else
+      fail "missing $r in merged output"
+    fi
+  done
+  rm -rf "$tmp"
+}
+
 # --- build a temp dir of fake gh/herdr/git that log their args ---------------
 make_fakes() {   # $1 = bindir, $2 = logfile
   local bin="$1" log="$2"
@@ -166,8 +199,9 @@ case "${1:-all}" in
   new)    test_new ;;
   openpr) test_openpr ;;
   action) test_action ;;
+  fetch)  test_fetch ;;
   lint)   test_lint ;;
-  all)    test_render; test_new; test_openpr; test_action; test_lint ;;
+  all)    test_render; test_new; test_fetch; test_openpr; test_action; test_lint ;;
   *) echo "unknown: $1" >&2; exit 2 ;;
 esac
 

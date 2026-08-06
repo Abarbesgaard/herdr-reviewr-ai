@@ -86,12 +86,16 @@ that copy:
 
 ## Keys
 
-| key      | action                                             |
-| -------- | -------------------------------------------------- |
-| `enter`  | check out the PR and open its work workspace       |
-| `ctrl-r` | refresh now                                        |
-| `ctrl-o` | open the PR on GitHub                              |
-| `esc`    | hide (the dashboard pane stays live)               |
+| key           | action                                             |
+| ------------- | -------------------------------------------------- |
+| `j` / `k`     | move down / up (or `↑` / `↓`)                       |
+| `g` / `G`     | jump to top / bottom                               |
+| `ctrl-d`/`ctrl-u` | half-page down / up                            |
+| type text     | filter the list                                    |
+| `enter`       | check out the PR and open its work workspace       |
+| `ctrl-r`      | refresh now                                        |
+| `ctrl-o`      | open the PR on GitHub                              |
+| `esc`         | hide (the dashboard pane stays live)               |
 
 ## Test
 

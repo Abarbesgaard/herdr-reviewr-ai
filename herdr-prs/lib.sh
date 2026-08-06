@@ -72,14 +72,23 @@ prs_fetch_one() {
 }
 
 # Fetch across all configured repos → one combined JSON array on stdout.
+# Repos are fetched in parallel (bounded) so the dashboard populates quickly
+# instead of waiting on ~N serial `gh` round-trips.
 prs_fetch_all() {
   local repo path
-  {
-    while IFS=$'\t' read -r repo path; do
-      [[ -z "$repo" ]] && continue
-      prs_fetch_one "$repo" "$path"
-    done < <(prs_repos)
-  } | jq -s 'add // []'
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/herdr-prs-fetch.XXXXXX")" || return 1
+  local -i i=0 max="${PRS_FETCH_PARALLEL:-8}"
+  while IFS=$'\t' read -r repo path; do
+    [[ -z "$repo" ]] && continue
+    prs_fetch_one "$repo" "$path" >"$tmp/$i.json" &
+    i+=1
+    # Bound concurrency: once we hit the cap, wait for one slot to free.
+    if (( i % max == 0 )); then wait; fi
+  done < <(prs_repos)
+  wait
+  cat "$tmp"/*.json 2>/dev/null | jq -s 'add // []'
+  rm -rf "$tmp"
 }
 
 # --- rendering (pure) --------------------------------------------------------
