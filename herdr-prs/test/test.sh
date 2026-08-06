@@ -159,6 +159,15 @@ test_openpr() {
 
   have "$out" "gh pr checkout 42 --repo vippsas/pling-backend" && pass "checks out the PR branch" || fail "no checkout in log"
   have "$out" "herdr workspace create --cwd $clone --label pling-backend #42 --focus" && pass "creates labelled workspace" || fail "no workspace create"
+  # Perceived-latency fix: the workspace must be created BEFORE the slow checkout.
+  local ws_ln co_ln
+  ws_ln="$(grep -n 'workspace create' <<<"$out" | head -1 | cut -d: -f1)"
+  co_ln="$(grep -n 'pr checkout' <<<"$out" | head -1 | cut -d: -f1)"
+  if [[ -n "$ws_ln" && -n "$co_ln" && "$ws_ln" -lt "$co_ln" ]]; then
+    pass "workspace opens before checkout (instant window)"
+  else
+    fail "workspace ($ws_ln) not before checkout ($co_ln)"
+  fi
   have "$out" "herdr pane rename pane-1 agent" && pass "left pane is agent" || fail "no agent rename"
   have "$out" "plugin pane open --plugin persiyanov.reviewr" && pass "reviewer pane on the right" || fail "no reviewer pane"
   have "$out" "herdr pane run pane-1 command copilot" && pass "agent command launched" || fail "no agent run"

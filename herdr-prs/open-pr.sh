@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Check out a chosen PR and open the work workspace for it:
-#   1. gh pr checkout <number>  in the repo's local clone
-#   2. new workspace, cwd = clone, label = "repo #num"
-#   3. left  pane "agent"    (runs $AGENT_CMD)
-#   4. right pane "reviewer" (per $REVIEWER — the persiyanov.reviewr plugin by default)
-# The reviewer's PR tab then lands on this very PR, since the branch is checked out.
+# Check out a chosen PR and open the work workspace for it. Order matters for
+# perceived speed: the workspace is created and focused FIRST (instant), then the
+# slow `gh pr checkout` runs behind the now-visible window, then the reviewer:
+#   1. refuse a dirty tree (fast, local)
+#   2. new workspace, cwd = clone, label = "repo #num"  → left pane "agent"
+#   3. gh pr checkout <number>  in the repo's local clone
+#   4. right pane "reviewer" (per $REVIEWER — the persiyanov.reviewr plugin)
+#   5. focus the agent pane and launch $AGENT_CMD
+# The reviewer's PR tab then lands on this very PR, since the branch is checked
+# out before the reviewer pane opens.
 set -uo pipefail
 export PATH="${PATH:+$PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,21 +29,18 @@ if [[ -z "$path" || ! -d "$path" ]]; then
   exit 1
 fi
 
-# ---- 1. check out the PR branch ---------------------------------------------
+# ---- 1. refuse a dirty tree (fast, local) -----------------------------------
 if ! git -C "$path" diff --quiet || ! git -C "$path" diff --cached --quiet; then
   "$H" notify "herdr-prs: $path has uncommitted changes — not switching branches" 2>/dev/null || true
   echo "uncommitted changes in $path; refusing to switch" >&2
   exit 1
 fi
-if ! gh pr checkout "$number" --repo "$repo" 2>/dev/null; then
-  # Fall back to running inside the clone (older gh without --repo on checkout).
-  ( cd "$path" && gh pr checkout "$number" ) || {
-    "$H" notify "herdr-prs: gh pr checkout $repo#$number failed" 2>/dev/null || true
-    echo "gh pr checkout failed" >&2; exit 1;
-  }
-fi
 
-# ---- 2. new workspace at the clone ------------------------------------------
+# ---- 2. open the workspace FIRST so it appears instantly ---------------------
+# The slow part is `gh pr checkout` (API + git fetch, ~1-2s). Creating the
+# workspace + agent pane up front and focusing it means the user lands in their
+# work window immediately; the checkout and the reviewer pane follow a moment
+# later, in the already-visible workspace, instead of blocking on a dead frame.
 label="${repo##*/} #$number"
 ws_json="$("$H" workspace create --cwd "$path" --label "$label" --focus)" || {
   echo "workspace create failed" >&2; exit 1;
@@ -50,7 +51,16 @@ if [[ -z "$agent_pane" ]]; then
 fi
 "$H" pane rename "$agent_pane" "agent" >/dev/null 2>&1 || true
 
-# ---- 3. reviewer pane on the right ------------------------------------------
+# ---- 3. check out the PR branch (the slow bit, now behind a visible window) --
+if ! gh pr checkout "$number" --repo "$repo" 2>/dev/null; then
+  # Fall back to running inside the clone (older gh without --repo on checkout).
+  ( cd "$path" && gh pr checkout "$number" ) || {
+    "$H" notify "herdr-prs: gh pr checkout $repo#$number failed" 2>/dev/null || true
+    echo "gh pr checkout failed" >&2
+  }
+fi
+
+# ---- 4. reviewer pane on the right ------------------------------------------
 case "$REVIEWER" in
   plugin:*)
     spec="${REVIEWER#plugin:}"; plugin_id="${spec%%:*}"; entry="${spec#*:}"
@@ -75,6 +85,6 @@ case "$REVIEWER" in
     ;;
 esac
 
-# ---- 4. focus the agent pane and launch the agent ---------------------------
+# ---- 5. focus the agent pane and launch the agent ---------------------------
 "$H" pane focus --direction left >/dev/null 2>&1 || true
 [[ -n "${AGENT_CMD:-}" ]] && "$H" pane run "$agent_pane" "$AGENT_CMD" >/dev/null 2>&1 || true
