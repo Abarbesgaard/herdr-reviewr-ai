@@ -124,7 +124,6 @@ test_lazy() {
   echo "lazy:"
   # shellcheck source=../lib.sh
   source "$HERE/lib.sh"; prs_load_config
-  export SPIN_FRAME="SPIN"
 
   # A list of 3 PRs; the cache knows CI for #1 (green) and #2 (red) only.
   local list cache out
@@ -142,13 +141,13 @@ test_lazy() {
   jq -e '.[2].ci_loading == true' <<<"$merged" >/dev/null \
     && pass "uncached PR marked ci_loading" || fail "row3 not marked ci_loading"
 
-  # Rendered glyphs: green ✓, red ✗, dim spinner for the loading one.
+  # Rendered glyphs: green ✓, red ✗, dim placeholder for the loading one.
   out="$(printf '%s' "$merged" | prs_render_rows)"
   local d1 d2 d3
   d1="$(sed -n 1p <<<"$out" | cut -f5)"; d2="$(sed -n 2p <<<"$out" | cut -f5)"; d3="$(sed -n 3p <<<"$out" | cut -f5)"
   have "$d1" $'\033[1;32m' && pass "cached green glyph renders" || fail "row1 not green: $(cat -v <<<"$d1")"
   have "$d2" $'\033[1;31m' && pass "cached red glyph renders"   || fail "row2 not red: $(cat -v <<<"$d2")"
-  have "$d3" $'\033[2mSPIN' && pass "loading PR shows dim spinner" || fail "row3 no spinner: $(cat -v <<<"$d3")"
+  have "$d3" $'\033[2m·' && pass "loading PR shows dim placeholder" || fail "row3 no placeholder: $(cat -v <<<"$d3")"
   rm -f "$cache"
 
   # prs_ci_states: fetches CI per repo in parallel, emits repo#num<TAB>STATE.

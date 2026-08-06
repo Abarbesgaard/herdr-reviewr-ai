@@ -142,7 +142,7 @@ prs_ci_states() {
 # prs_ci_merge <cachefile> : stdin = cheap PR array → same array annotated for the
 # renderer's CI glyph. A PR present in the cache gets a synthetic .statusCheckRollup
 # rebuilt from its cached STATE; a PR NOT yet in the cache is marked .ci_loading so
-# the renderer shows the spinner. An empty/missing cache = everything is loading.
+# the renderer shows a dim placeholder. An empty/missing cache = everything is loading.
 prs_ci_merge() {
   local cache="${1:-}"
   local map='{}'
@@ -173,7 +173,7 @@ def age($created):
     elif $s < 86400 then "\(($s/3600) | floor)h"
     else                 "\(($s/86400)| floor)d" end;
 def ci($rollup; $loading):
-  if $loading then "\u001b[2m\($spin)\u001b[0m"
+  if $loading then "\u001b[2m·\u001b[0m"
   else
     ([ ($rollup // [])[] | (.conclusion // .state // .status) ]) as $c
     | (if   ($c | length) == 0 then ["90","·"]
@@ -209,7 +209,7 @@ prs_render_rows() {
   if [[ -n "$seen_file" && -f "$seen_file" ]]; then
     seen="$(jq -R -s 'split("\n") | map(select(length>0))' < "$seen_file")"
   fi
-  jq -r --argjson now "$now" --argjson seen "$seen" --arg spin "${SPIN_FRAME:-⋯}" "$_PRS_JQ"
+  jq -r --argjson now "$now" --argjson seen "$seen" "$_PRS_JQ"
 }
 
 # prs_keys : stdin = combined PR JSON array → "repo#num" keys, one per line.

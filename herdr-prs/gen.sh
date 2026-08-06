@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Fetch (cheaply) + render the PR rows for the dashboard. The CI pipeline glyph is
-# loaded LAZILY: this prints the list immediately with a spinner where CI isn't
-# known yet, kicks a background enrich.sh to fill the CI cache, and — when called
-# as `gen.sh --loop` by fzf's reload bind — animates the spinner on a fast cadence
-# while loading, then settles to the normal refresh INTERVAL once CI has landed.
+# loaded LAZILY: this prints the list immediately with a dim placeholder where CI
+# isn't known yet, and kicks a background enrich.sh to fill the CI cache. When
+# called as `gen.sh --loop` by fzf's reload bind it waits the refresh INTERVAL,
+# re-fetches, and repaints — by which point the CI glyphs have usually landed.
 set -uo pipefail
 export PATH="${PATH:+$PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -15,11 +15,9 @@ STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-${TMPDIR:-/tmp}/herdr-prs}"
 mkdir -p "$STATE_DIR"
 SEEN_FILE="$STATE_DIR/seen.keys"
 CACHE="$STATE_DIR/ci.cache"       # repo#num<TAB>STATE, written by enrich.sh
-LIST="$STATE_DIR/list.json"       # last cheap PR fetch, reused between spinner frames
-SPIN_FILE="$STATE_DIR/spin.frame"
+LIST="$STATE_DIR/list.json"       # last cheap PR fetch, reused between refreshes
 LOCK="$STATE_DIR/enrich.lock"
 
-FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 mode="${1:-}"
 
 mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
@@ -42,24 +40,6 @@ kick_enrich() {
   fi
 }
 
-# Advance the spinner one frame (persisted so successive repaints "spin").
-advance_spinner() {
-  local f=0
-  [[ -f "$SPIN_FILE" ]] && f="$(<"$SPIN_FILE")"
-  f=$(( (f + 1) % ${#FRAMES[@]} ))
-  printf '%s' "$f" > "$SPIN_FILE"
-  export SPIN_FRAME="${FRAMES[$f]}"
-}
-
-# Is CI still loading? (PRS_CI on, and some open PR has no cache entry yet.)
-is_loading() {
-  [[ "${PRS_CI:-1}" == 1 ]] || return 1
-  [[ -s "$CACHE" ]] || return 0
-  local missing
-  missing="$(comm -23 <(prs_keys < "$LIST" | sort -u) <(cut -f1 "$CACHE" | sort -u) | head -1)"
-  [[ -n "$missing" ]]
-}
-
 render() {
   if [[ "${PRS_CI:-1}" == 1 ]]; then
     prs_ci_merge "$CACHE" < "$LIST" | prs_render_rows "$SEEN_FILE"
@@ -71,19 +51,16 @@ render() {
 fetch_list() { prs_fetch_all > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"; }
 
 if [[ "$mode" == "--loop" ]]; then
-  # Reuse the cached list unless it's gone; only re-fetch on the slow cadence.
+  # Reuse the cached list unless it's gone, then wait the refresh interval and
+  # re-fetch. A background enrich fills the CI cache; its glyphs appear on the
+  # next repaint (until then those PRs show a dim placeholder).
   [[ -s "$LIST" ]] || fetch_list
-  if is_loading; then
-    sleep "${SPIN_INTERVAL:-0.5}"      # fast: animate the spinner, catch the cache
-  else
-    sleep "${INTERVAL:-60}"            # settled: normal refresh
-    fetch_list
-    kick_enrich
-  fi
+  sleep "${INTERVAL:-60}"
+  fetch_list
+  kick_enrich
 else
   fetch_list                            # first paint
   kick_enrich
 fi
 
-advance_spinner
 render

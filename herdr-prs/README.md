@@ -27,10 +27,10 @@ on a PR and it checks the branch out in your local clone and opens the usual
   non-draft PRs for every repo in `repos.conf` via `gh`, sorts them oldest-first,
   and renders `repo · #num · title · @author · [review] · CI · age`. The list
   paints at once; the **CI pipeline glyph** is filled in *lazily* — a dim
-  spinner marks each PR whose status isn't known yet while `enrich.sh` fetches
-  it in the background, then the glyph settles to a colour: green `✓` pass,
-  red `✗` fail, yellow `●` pending, grey `·` no checks. It auto-refreshes every
-  `INTERVAL` seconds and on `ctrl-r`.
+  placeholder marks each PR whose status isn't known yet while `enrich.sh` fetches
+  it in the background, then the glyph settles to a colour on the next refresh:
+  green `✓` pass, red `✗` fail, yellow `●` pending, grey `·` no checks. It
+  auto-refreshes every `INTERVAL` seconds and on `ctrl-r`.
 - **Enter** runs `open-pr.sh`: `gh pr checkout <n>` in the repo's local clone,
   then a new workspace labelled `repo #num` with an **agent** pane (left) and a
   **reviewer** pane (right, the `persiyanov.reviewr` plugin by default). Because
@@ -95,8 +95,7 @@ that copy:
 | `REPOS_FILE`| Path to the repo list (default: `repos.conf` beside the plugin).|
 | `ROOTS`     | Directories scanned to resolve a repo with no explicit path.  |
 | `INTERVAL`  | Auto-refresh cadence in seconds (default `60`).               |
-| `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background with a spinner. `0` drops it (always `·`). |
-| `SPIN_INTERVAL` | Spinner animation cadence in seconds while CI loads (default `0.5`). |
+| `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background (a dim `·` placeholder until it lands). `0` drops it (always `·`). |
 | `PRS_REVIEW`| `1` shows the review-decision label. Default `0` (`—`). Unlike CI this is fetched inline, so it slows the first paint on busy repos. |
 | `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |
 | `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |

@@ -18,12 +18,10 @@ ROOTS=(
 : "${INTERVAL:=60}"
 
 # CI pipeline glyph (green ✓ / yellow ● / red ✗ / grey ·) from statusCheckRollup.
-# On by default and loaded LAZILY: the list appears at once with a spinner where
-# CI isn't known yet, and a background job fills it in. Set to 0 to drop it.
+# On by default and loaded LAZILY: the list appears at once with a dim placeholder
+# where CI isn't known yet, and a background job fills it in (its glyphs land on
+# the next refresh). Set to 0 to drop it.
 : "${PRS_CI:=1}"
-
-# Spinner cadence (seconds) while CI is still loading — how fast it animates.
-: "${SPIN_INTERVAL:=0.5}"
 
 # Review-decision label ([approved] / [changes] / [review-needed]). Off by
 # default; unlike CI it's fetched INLINE, so turning it on slows the first paint
