@@ -1,0 +1,12 @@
+# herdr-prs repo list — EXAMPLE. Copy to repos.conf, or just press ctrl-e in the
+# dashboard to generate your own with the picker (recommended).
+#
+# One repo per line: owner/repo, then an optional TAB and the local clone path.
+# A line with no path is resolved by scanning ROOTS (see config.sh) for a clone
+# whose origin remote ends in owner/repo(.git).
+
+# With an explicit local clone path:
+vippsas/ongoing-due-diligence	/Users/you/Development/Rider/ongoing-due-diligence
+
+# Without a path — resolved automatically from ROOTS:
+vippsas/pling-backend

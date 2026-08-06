@@ -15,6 +15,18 @@ review. See `specs/ai-review.md` for the full behaviour.
 
 ## Install
 
+The quickest path is the bundled installer, which builds the binary, links the plugin, and
+installs the skill (add `--all` to also set up the `herdr-projects` and `herdr-prs` companions):
+
+```bash
+git clone https://github.com/Abarbesgaard/reviewr-local-ai
+cd reviewr-local-ai
+./install.sh          # or: ./install.sh --all
+```
+
+<details>
+<summary>Or do it by hand</summary>
+
 ```bash
 # 1. Clone this repo (default branch is `ai-review`, so you land on it directly)
 git clone https://github.com/Abarbesgaard/reviewr-local-ai
@@ -32,6 +44,8 @@ herdr plugin link .
 mkdir -p ~/.copilot/skills/review-herdr
 cp skills/review-herdr/SKILL.md ~/.copilot/skills/review-herdr/SKILL.md
 ```
+
+</details>
 
 ## Use
 
@@ -52,6 +66,8 @@ This repo also bundles a small companion herdr plugin under `herdr-projects/`. P
 **`prefix+p`** to pop up a fuzzy picker of your git projects; pick one and herdr opens a fresh
 workspace with an **agent** pane (left) and a **reviewer** pane (right, the reviewr plugin above).
 See `herdr-projects/README.md` for details and configuration.
+
+> `./install.sh --with-projects` (or `--all`) does the link + keybinding + config reload below for you.
 
 ```bash
 # Link it as a herdr plugin (from the repo root)
@@ -82,6 +98,8 @@ This repo also bundles `herdr-prs/`, a persistent **PR dashboard**: a dedicated 
 first, auto-refreshing. Press **Enter** on a PR and it runs `gh pr checkout` in your local clone
 and opens the same agent + reviewer work workspace, so the reviewer's PR tab lands on it.
 
+> `./install.sh --with-prs` (or `--all`) does the link + keybinding + config reload below for you.
+
 ```bash
 # Link it as a herdr plugin (from the repo root)
 herdr plugin link ./herdr-prs
@@ -100,8 +118,10 @@ TOML
 herdr server reload-config
 ```
 
-Edit `herdr-prs/repos.conf` to choose the repos (one `owner/repo` per line, optional TAB + local
-path; seeded with your locally-cloned team repos). Behaviour lives in a seeded
+Choose the repos it watches by pressing **`ctrl-e`** in the dashboard to pick from your team
+(`PICK_ORG`/`PICK_TEAM`), or seed `herdr-prs/repos.conf` by hand — `cp herdr-prs/repos.conf.example
+herdr-prs/repos.conf` then edit (one `owner/repo` per line, optional TAB + local path). The file is
+git-ignored per-machine state, so a fresh checkout starts empty. Behaviour lives in a seeded
 `$(herdr plugin config-dir herdr-prs)/config.sh` (`INTERVAL`, `AGENT_CMD`, `REVIEWER`, …).
 Requirements: `herdr`, `gh` (authenticated), `fzf`, `jq`, `git`. See `herdr-prs/README.md`.
 

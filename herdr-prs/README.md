@@ -69,8 +69,16 @@ Reload herdr: `herdr server reload-config`.
 ### Which repos — `repos.conf`
 
 One repo per line, `owner/repo` then an optional TAB and the local clone path.
-Lines with no path are resolved by scanning `ROOTS` (see below). Comes seeded with
-your locally-cloned `team-risky-business` (vippsas) repos — trim or add freely:
+Lines with no path are resolved by scanning `ROOTS` (see below). A fresh checkout
+ships **no** `repos.conf` (it's git-ignored, per-machine state) — the easiest way
+to create yours is to press **`ctrl-e`** in the dashboard and pick from your
+team's repos (see below). To seed it by hand instead, copy the bundled example:
+
+```
+cp repos.conf.example repos.conf   # then edit, or run the ctrl-e picker
+```
+
+Format (`repos.conf.example`):
 
 ```
 vippsas/ongoing-due-diligence	/Users/you/Development/Rider/ongoing-due-diligence

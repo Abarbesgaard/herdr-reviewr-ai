@@ -19,6 +19,19 @@ herdr plugin.
 a Rust toolchain (`rustup`) · git · a truecolor terminal.
 
 ```bash
+# Clone (default branch is `ai-review`, so you land on it directly)
+git clone https://github.com/Abarbesgaard/reviewr-local-ai
+cd reviewr-local-ai
+
+# One command: builds the binary, links the plugin, installs the review-herdr skill.
+# Add --all to also set up the herdr-projects and herdr-prs companions below.
+./install.sh
+```
+
+<details>
+<summary>Or do it by hand</summary>
+
+```bash
 # 1. Clone (default branch is `ai-review`, so you land on it directly)
 git clone https://github.com/Abarbesgaard/reviewr-local-ai
 cd reviewr-local-ai
@@ -36,9 +49,10 @@ mkdir -p ~/.copilot/skills/review-herdr
 cp skills/review-herdr/SKILL.md ~/.copilot/skills/review-herdr/SKILL.md
 ```
 
-**To update after pulling:** rebuild (`cargo build --release`), reinstall the binary into
-`bin/`, and **close + reopen** each reviewr pane — a running pane keeps the old binary until you
-toggle it off and on.
+</details>
+
+**To update after pulling:** re-run `./install.sh` (or rebuild by hand), and **close + reopen**
+each reviewr pane — a running pane keeps the old binary until you toggle it off and on.
 
 ## Use
 
@@ -80,6 +94,8 @@ Press **`prefix+p`** to pop up a fuzzy picker of your git projects; pick one and
 fresh workspace with an **agent** pane (left) and a **reviewer** pane (right, the reviewr plugin
 above).
 
+> `./install.sh --with-projects` (or `--all`) does the link + keybinding + reload below for you.
+
 ```bash
 # Link it as a herdr plugin (from the repo root)
 herdr plugin link ./herdr-projects
@@ -111,6 +127,8 @@ the top**, auto-refreshing. Press **Enter** on a PR and it runs `gh pr checkout`
 clone and opens the same **agent + reviewer** work workspace — so the reviewer's PR tab lands
 right on it and you can start working.
 
+> `./install.sh --with-prs` (or `--all`) does the link + keybinding + reload below for you.
+
 ```bash
 # Link it as a herdr plugin (from the repo root)
 herdr plugin link ./herdr-prs
@@ -129,8 +147,10 @@ TOML
 herdr server reload-config
 ```
 
-The repos it watches live in [`herdr-prs/repos.conf`](herdr-prs/repos.conf) (one `owner/repo` per
-line, optional TAB + local path), seeded with your locally-cloned team repos. Behaviour
+Pick the repos it watches with **`ctrl-e`** in the dashboard (from your `PICK_ORG`/`PICK_TEAM`), or
+seed [`herdr-prs/repos.conf`](herdr-prs/repos.conf.example) by hand (one `owner/repo` per line,
+optional TAB + local path). That file is git-ignored per-machine state, so a fresh checkout starts
+empty — copy `herdr-prs/repos.conf.example` to get going. Behaviour
 (`INTERVAL`, `AGENT_CMD`, `REVIEWER`, …) is a seeded `config.sh` in the plugin config dir.
 Requirements: `herdr`, `gh` (authenticated), `fzf`, `jq`, `git`. See
 [`herdr-prs/README.md`](herdr-prs/README.md) for the full reference.
