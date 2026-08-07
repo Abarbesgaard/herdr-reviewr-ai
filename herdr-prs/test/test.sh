@@ -150,6 +150,16 @@ test_lazy() {
   have "$d3" $'\033[2m·' && pass "loading PR shows dim placeholder" || fail "row3 no placeholder: $(cat -v <<<"$d3")"
   rm -f "$cache"
 
+  # CI reducer: gh returns conclusion:"" (empty, not null) for a still-running
+  # check, so `//` mustn't fall through to SUCCESS. Running/queued => PENDING.
+  local st
+  st="$(echo '[{"conclusion":"","status":"IN_PROGRESS"}]' | jq -r "$_PRS_CI_STATE")"
+  [[ "$st" == "PENDING" ]] && pass "running check (empty conclusion) => PENDING" || fail "running => $st"
+  st="$(echo '[{"conclusion":"SUCCESS","status":"COMPLETED"},{"conclusion":"","status":"QUEUED"}]' | jq -r "$_PRS_CI_STATE")"
+  [[ "$st" == "PENDING" ]] && pass "success + queued => PENDING (not green)" || fail "mixed => $st"
+  st="$(echo '[{"conclusion":"SUCCESS","status":"COMPLETED"}]' | jq -r "$_PRS_CI_STATE")"
+  [[ "$st" == "SUCCESS" ]] && pass "completed success => SUCCESS" || fail "success => $st"
+
   # prs_ci_states: fetches CI per repo in parallel, emits repo#num<TAB>STATE.
   local tmp bin repos
   tmp="$(mktemp -d)"; bin="$tmp/bin"; mkdir -p "$bin"

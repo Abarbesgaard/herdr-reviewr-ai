@@ -111,7 +111,7 @@ prs_fetch_all() {
 # The reducer: a statusCheckRollup array → one STATE word. Mirrors the renderer's
 # precedence (any failure ⇒ FAILURE, else any pending/unknown ⇒ PENDING, …).
 _PRS_CI_STATE='
-  ([ (. // [])[] | (.conclusion // .state // .status) ]) as $c
+  ([ (. // [])[] | ([.conclusion, .state, .status] | map(select(. != null and . != "")) | .[0]) ]) as $c
   | if   ($c | length) == 0 then "NONE"
     elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then "FAILURE"
     elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then "PENDING"
@@ -175,7 +175,7 @@ def age($created):
 def ci($rollup; $loading):
   if $loading then "\u001b[2m·\u001b[0m"
   else
-    ([ ($rollup // [])[] | (.conclusion // .state // .status) ]) as $c
+    ([ ($rollup // [])[] | ([.conclusion, .state, .status] | map(select(. != null and . != "")) | .[0]) ]) as $c
     | (if   ($c | length) == 0 then ["90","·"]
        elif ($c | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED")) then ["31","✗"]
        elif ($c | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "WAITING" or . == null)) then ["33","●"]
