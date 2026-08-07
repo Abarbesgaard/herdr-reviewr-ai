@@ -35,6 +35,21 @@ if [[ "$PRS_RICH" == 1 ]]; then PRS_CI=1; PRS_REVIEW=1; fi
 # How many repos to query in parallel. Higher = faster, more concurrent gh calls.
 : "${PRS_FETCH_PARALLEL:=8}"
 
+# Background watcher: a detached poller (watch.sh) that pings GitHub
+# /notifications for your configured repos and, on a change, (a) raises a herdr
+# toast for new PR comments/reviews and (b) nudges the list to repaint so the CI
+# glyphs refresh on their own — no manual ctrl-r. On by default. Set to 0 to
+# disable entirely: no poller, no toasts, and no fzf --listen socket; the
+# dashboard then refreshes only on its INTERVAL loop and ctrl-r, exactly as before.
+: "${PRS_WATCH:=1}"
+
+# Which GitHub notification reasons raise a toast (comma-separated). CI activity
+# (ci_activity) always triggers a silent refresh; it only pops a toast if listed.
+: "${PRS_NOTIFY_REASONS:=comment,mention,review_requested,review,state_change,author}"
+
+# Sound for a new-notification toast: none | done | request.
+: "${PRS_NOTIFY_SOUND:=request}"
+
 # The repo picker (pick-repos.sh) pool: the org, and an optional team. With a
 # team set, the pool is that team's repos; empty team = every repo you can see.
 : "${PICK_ORG:=vippsas}"

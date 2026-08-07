@@ -300,6 +300,53 @@ test_action() {
   rm -rf "$tmp"
 }
 
+# --- pure: watch notification filter -----------------------------------------
+test_watch() {
+  echo "watch:"
+  # shellcheck source=../lib.sh
+  source "$HERE/lib.sh"
+
+  # Three notifications: two in watched repos (a PR review + a CI CheckSuite),
+  # one in an UNwatched repo that must be dropped.
+  local feed repos out
+  feed='[
+    {"id":"100","reason":"review_requested","updated_at":"2026-08-06T10:00:00Z",
+     "repository":{"full_name":"vippsas/a"},
+     "subject":{"type":"PullRequest","title":"Add widget","url":"https://api.github.com/repos/vippsas/a/pulls/42"}},
+    {"id":"200","reason":"ci_activity","updated_at":"2026-08-06T11:00:00Z",
+     "repository":{"full_name":"vippsas/b"},
+     "subject":{"type":"CheckSuite","title":"CI failed","url":null}},
+    {"id":"300","reason":"comment","updated_at":"2026-08-06T12:00:00Z",
+     "repository":{"full_name":"other/z"},
+     "subject":{"type":"PullRequest","title":"nope","url":"https://api.github.com/repos/other/z/pulls/7"}}
+  ]'
+  repos='["vippsas/a","vippsas/b"]'
+
+  out="$(printf '%s' "$feed" | prs_notify_new "" "$repos")"
+  [[ "$(wc -l <<<"$out" | tr -d ' ')" == 2 ]] && pass "keeps only watched-repo threads" \
+    || fail "expected 2 rows, got: $(cat -v <<<"$out")"
+  have "$out" $'100\treview_requested\tvippsas/a\t42\tAdd widget' \
+    && pass "PR row parses number 42 from subject url" || fail "row1 wrong: $(cat -v <<<"$out")"
+  have "$out" $'200\tci_activity\tvippsas/b\t\tCI failed' \
+    && pass "CheckSuite row has empty num (null url)" || fail "row2 wrong: $(cat -v <<<"$out")"
+  ! have "$out" "other/z" && pass "unwatched repo dropped" || fail "unwatched leaked"
+
+  # Watermark dedup: seed seen from the feed → nothing is new; then bump one
+  # thread's updated_at → exactly that thread resurfaces.
+  local seen
+  seen="$(mktemp)"
+  printf '%s' "$feed" | prs_notify_watermarks > "$seen"
+  out="$(printf '%s' "$feed" | prs_notify_new "$seen" "$repos")"
+  [[ -z "$out" ]] && pass "seeded watermark ⇒ no repeats" || fail "expected 0, got: $(cat -v <<<"$out")"
+
+  local bumped
+  bumped="$(printf '%s' "$feed" | jq -c '(.[] | select(.id=="100") | .updated_at) |= "2026-08-06T13:00:00Z"')"
+  out="$(printf '%s' "$bumped" | prs_notify_new "$seen" "$repos")"
+  [[ "$(wc -l <<<"$out" | tr -d ' ')" == 1 ]] && have "$out" $'100\t' \
+    && pass "changed thread resurfaces after update" || fail "expected only #100, got: $(cat -v <<<"$out")"
+  rm -f "$seen"
+}
+
 # --- lint --------------------------------------------------------------------
 test_lint() {
   echo "lint:"
@@ -315,12 +362,13 @@ test_lint() {
 case "${1:-all}" in
   render) test_render ;;
   new)    test_new ;;
+  watch)  test_watch ;;
   openpr) test_openpr; test_openpr_dirty ;;
   action) test_action ;;
   fetch)  test_fetch ;;
   lazy)   test_lazy ;;
   lint)   test_lint ;;
-  all)    test_render; test_new; test_fetch; test_lazy; test_openpr; test_openpr_dirty; test_action; test_lint ;;
+  all)    test_render; test_new; test_fetch; test_lazy; test_watch; test_openpr; test_openpr_dirty; test_action; test_lint ;;
   *) echo "unknown: $1" >&2; exit 2 ;;
 esac
 

@@ -24,12 +24,34 @@ header=$'★ = new since last visit   ·   j/k or ↑/↓: move   ·   g/G: top/
 export FZF_DEFAULT_OPTS="$(printf '%s' "${FZF_DEFAULT_OPTS:-}" \
   | sed -E 's/--height[=[:space:]]+[0-9]+%?//g; s/--border(=[a-z-]+)?//g')"
 
+# Background watcher (config PRS_WATCH): open an fzf --listen control socket and
+# start watch.sh, which polls GitHub /notifications and POSTs a reload here when
+# something changes (new comment/review, CI transition) — so glyphs refresh and
+# toasts fire without a manual ctrl-r. The start bind records fzf's chosen port
+# ($FZF_PORT) for the watcher. With PRS_WATCH=0 none of this runs: no socket, no
+# poller, no toasts — the list refreshes only on the INTERVAL loop and ctrl-r.
+mkdir -p "$STATE_DIR"
+listen_opt=""
+start_bind="start:reload(bash $HERE/gen.sh)"
+if [[ "${PRS_WATCH:-1}" == 1 ]]; then
+  listen_opt="--listen=0"
+  start_bind="${start_bind}+execute-silent(printf %s \"\$FZF_PORT\" > \"$STATE_DIR/fzf.port\")"
+  # Detach the watcher so it outlives any single fzf invocation in the loop.
+  # It is a singleton (lock dir) and self-exits when this pane goes away.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash "$HERE/watch.sh" >/dev/null 2>&1 &
+  else
+    nohup bash "$HERE/watch.sh" >/dev/null 2>&1 &
+  fi
+  disown 2>/dev/null || true
+fi
+
 while true; do
-  fzf --ansi --no-sort --border=none --layout=reverse --info=inline \
+  fzf --ansi --no-sort --border=none --layout=reverse --info=inline $listen_opt \
       --delimiter='\t' --with-nth='5..' \
       --prompt='PR ▸ ' --header="$header" --header-first \
       --bind 'j:down,k:up,g:first,G:last,ctrl-d:half-page-down,ctrl-u:half-page-up' \
-      --bind "start:reload(bash $HERE/gen.sh)" \
+      --bind "$start_bind" \
       --bind "load:reload(bash $HERE/gen.sh --loop)" \
       --bind "ctrl-r:reload(bash $HERE/gen.sh)" \
       --bind "ctrl-e:execute(bash $HERE/pick-repos.sh)+reload(bash $HERE/gen.sh)" \

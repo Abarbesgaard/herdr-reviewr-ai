@@ -31,6 +31,15 @@ on a PR and it checks the branch out in your local clone and opens the usual
   it in the background, then the glyph settles to a colour on the next refresh:
   green `✓` pass, red `✗` fail, yellow `●` pending, grey `·` no checks. It
   auto-refreshes every `INTERVAL` seconds and on `ctrl-r`.
+- **Live watcher** (`watch.sh`, on by default — `PRS_WATCH`) — a detached
+  singleton poller that pings GitHub `/notifications` for your configured repos
+  (respecting GitHub's `X-Poll-Interval`, so ≥ 60s and read-only — it never marks
+  your inbox read). On a change it toasts new PR comments/reviews (`herdr
+  notification show`, reasons from `PRS_NOTIFY_REASONS`) and nudges the list to
+  repaint through `fzf`'s `--listen` socket, so a CI glyph flips colour or a fresh
+  comment surfaces on its own, without a manual `ctrl-r`. The first cycle seeds
+  its watermark silently so your existing unread backlog isn't announced. Only
+  PRs you're subscribed/watching on GitHub generate notifications.
 - **Enter** runs `open-pr.sh`: `gh pr checkout <n>` in the repo's local clone,
   then a new workspace labelled `repo #num` with an **agent** pane (left) and a
   **reviewer** pane (right, the `persiyanov.reviewr` plugin by default). Because
@@ -99,6 +108,9 @@ that copy:
 | `PRS_REVIEW`| `1` (default) shows the review-decision label. `0` drops it (rows show `—`). Unlike CI this is fetched inline, so it can slow the first paint on busy repos. |
 | `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |
 | `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |
+| `PRS_WATCH` | `1` (default) runs a background watcher that polls GitHub `/notifications` and, on a change, toasts new PR comments/reviews and auto-refreshes the CI glyphs — no manual `ctrl-r`. `0` disables it entirely (no poller, no toasts, no `--listen` socket). |
+| `PRS_NOTIFY_REASONS` | Comma-separated notification reasons that raise a toast (default `comment,mention,review_requested,review,state_change,author`). CI activity always triggers a silent refresh; it only toasts if `ci_activity` is listed. |
+| `PRS_NOTIFY_SOUND` | Toast sound: `none`, `done`, or `request` (default `request`). |
 | `PICK_ORG` / `PICK_TEAM` | The `ctrl-e` picker's pool: a team's repos, or (empty team) every repo you can see in the org. |
 | `WS_LABEL`  | Label of the dashboard workspace (default `PRs`).            |
 | `AGENT_CMD` | Command run in the left **agent** pane of the work workspace. |

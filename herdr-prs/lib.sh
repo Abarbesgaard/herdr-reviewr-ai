@@ -21,6 +21,14 @@ prs_load_config() {
   : "${WS_LABEL:=PRs}"
   : "${AGENT_CMD:=command copilot}"
   : "${REVIEWER:=plugin:persiyanov.reviewr:pane}"
+  # Shared scratch dir (cache, seen watermarks, the fzf --listen port). Every
+  # entry point resolves it the same way so gen.sh, dashboard.sh and watch.sh
+  # agree on one location.
+  : "${STATE_DIR:=${HERDR_PLUGIN_STATE_DIR:-${TMPDIR:-/tmp}/herdr-prs}}"
+  # Background watcher defaults (also documented in config.sh).
+  : "${PRS_WATCH:=1}"
+  : "${PRS_NOTIFY_REASONS:=comment,mention,review_requested,review,state_change,author}"
+  : "${PRS_NOTIFY_SOUND:=request}"
 }
 
 # Read repos.conf → emit "owner/repo<TAB>path" lines, resolving a missing path by
@@ -215,4 +223,45 @@ prs_render_rows() {
 # prs_keys : stdin = combined PR JSON array → "repo#num" keys, one per line.
 prs_keys() {
   jq -r '.[] | "\(.repo)#\(.number)"'
+}
+
+# --- watch: new-notification filter (pure) -----------------------------------
+# The dashboard's watcher (watch.sh) polls GitHub /notifications; these helpers
+# turn that raw feed into the rows worth acting on. Pure and unit-tested — no
+# network here.
+
+# prs_repo_list_json : repos.conf → a JSON array of "owner/repo" for the filter.
+prs_repo_list_json() {
+  prs_repos | cut -f1 | jq -R -s 'split("\n") | map(select(length>0))'
+}
+
+# The jq that keeps only threads in a watched repo whose (id,updated_at) is new
+# against the seen map, and flattens each to a TSV row:
+#   id \t reason \t repo \t num \t title \t updated_at
+# num is the PR number parsed from the subject URL, or "" for a non-PR subject
+# (e.g. a CheckSuite, whose subject.url is null).
+_PRS_NOTIFY='
+  map(select(.repository.full_name as $r | ($repos | index($r)) != null))
+  | .[]
+  | select( ($seen[.id] // "") != .updated_at )
+  | [ .id, .reason, .repository.full_name,
+      ((.subject.url // "") | if test("/pulls/[0-9]+") then sub(".*/pulls/"; "") else "" end),
+      (.subject.title // ""), .updated_at ] | @tsv
+'
+
+# prs_notify_new <seen_file> <repos_json> : stdin = /notifications JSON array →
+# TSV rows for the threads worth surfacing (watched repo, changed since seen).
+# A missing/empty seen file means every watched thread is new.
+prs_notify_new() {
+  local seen_file="${1:-}" repos="${2:-[]}" seen='{}'
+  if [[ -n "$seen_file" && -f "$seen_file" ]]; then
+    seen="$(jq -R -s 'split("\n") | map(select(length>0) | split("\t")) | map({(.[0]): .[1]}) | add // {}' < "$seen_file")"
+  fi
+  jq -r --argjson repos "$repos" --argjson seen "$seen" "$_PRS_NOTIFY"
+}
+
+# prs_notify_watermarks : stdin = /notifications JSON array → "id<TAB>updated_at"
+# lines, the seed/rebuild of the seen file (prunes threads that dropped off).
+prs_notify_watermarks() {
+  jq -r '.[] | "\(.id)\t\(.updated_at)"'
 }
