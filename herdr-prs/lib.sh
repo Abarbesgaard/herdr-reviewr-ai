@@ -17,7 +17,7 @@ prs_load_config() {
     source "$cfg/config.sh"
   fi
   : "${REPOS_FILE:=$HERE/repos.conf}"
-  : "${INTERVAL:=60}"
+  : "${INTERVAL:=30}"
   : "${WS_LABEL:=PRs}"
   : "${AGENT_CMD:=command copilot}"
   : "${REVIEWER:=plugin:persiyanov.reviewr:pane}"

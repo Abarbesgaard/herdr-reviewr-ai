@@ -103,7 +103,7 @@ that copy:
 | ----------- | ------------------------------------------------------------- |
 | `REPOS_FILE`| Path to the repo list (default: `repos.conf` beside the plugin).|
 | `ROOTS`     | Directories scanned to resolve a repo with no explicit path.  |
-| `INTERVAL`  | Auto-refresh cadence in seconds (default `60`).               |
+| `INTERVAL`  | Auto-refresh cadence in seconds (default `30`). Also the CI re-fetch floor: a pipeline glyph can only flip colour once the CI cache is this old. Lower = snappier but more `gh` load (`statusCheckRollup` cost scales with your open-PR count). The watcher's own `/notifications` poll is separately clamped to ≥ 60s regardless. |
 | `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background (a dim `·` placeholder until it lands). `0` drops it (always `·`). |
 | `PRS_REVIEW`| `1` (default) shows the review-decision label. `0` drops it (rows show `—`). Unlike CI this is fetched inline, so it can slow the first paint on busy repos. |
 | `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |

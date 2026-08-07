@@ -14,8 +14,11 @@ ROOTS=(
   "$HOME/Development"
 )
 
-# Auto-refresh cadence for the live list, in seconds.
-: "${INTERVAL:=60}"
+# Auto-refresh cadence for the live list, in seconds. Also the CI re-fetch floor:
+# enrich.sh only re-queries statusCheckRollup once the cache is this old, so this
+# is how quickly a pipeline glyph can flip colour on its own. Lower = snappier but
+# more `gh` load (statusCheckRollup cost scales with your open-PR count).
+: "${INTERVAL:=30}"
 
 # CI pipeline glyph (green ✓ / yellow ● / red ✗ / grey ·) from statusCheckRollup.
 # On by default and loaded LAZILY: the list appears at once with a dim placeholder
