@@ -76,7 +76,8 @@ The list is a flat sequence of visible rows over the tree.
 
 ### Presentation
 
-- A file row is `<marker> <name> <stats>`: the marker colored by kind, the basename bright, parent directories dimmed, stats right-aligned.
+- A file row is `<marker> <name> <stats>`: the marker colored by kind, the basename colored the same by change kind (added green, modified peach, deleted red, renamed mauve — `theme.md`) so the list is scannable by colour, parent directories dimmed, stats right-aligned. An unchanged `All files` row keeps the plain text colour.
+- A directory row colours its name by the aggregate change of everything beneath it: the shared kind when its changed descendants agree, the modified accent when they differ, and the neutral heading colour when nothing under it changed. The change propagates up, so a collapsed folder still signals a change buried deep inside it. An ignored directory stays dimmed regardless.
 - Stats read `+added −removed`: additions green, deletions red, a zero side dropped. A change with no countable lines (a binary file) shows no stats.
 - An ignored row dims whole, distinct from the marker colors. `All files` is the one place an ignored path is readable. An ignored file never carries a change marker, since every scope respects `.gitignore` (`review-model.md`).
 - A too-narrow path shortens with a middle ellipsis (`…/2026-06-23-changes/plan`), keeping the basename and stats visible.

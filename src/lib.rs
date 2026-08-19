@@ -2638,6 +2638,18 @@ mod refresh_tests {
     }
 
     #[test]
+    fn an_unconfigured_pane_starts_in_branch_scope() {
+        // No config file: the built-in default seeds the pane. A checked-out branch or PR
+        // shows everything it carries over its base the moment the pane opens, so Changes
+        // and All files are never empty on a committed branch (specs/review-model.md).
+        let repo = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        let cfg = Config::parse([repo.path().display().to_string()]);
+        let app = ready_app(&cfg, plugin_config_in(config_dir.path()).unwrap());
+        assert_eq!(app.scope, Scope::Branch, "an unconfigured pane defaults to branch scope");
+    }
+
+    #[test]
     fn default_scope_seeds_a_fresh_pane_and_a_reread_never_switches_it() {
         let repo = tempfile::tempdir().unwrap();
         let config_dir = tempfile::tempdir().unwrap();

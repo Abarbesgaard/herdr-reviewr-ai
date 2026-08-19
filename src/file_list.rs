@@ -26,8 +26,10 @@ pub struct Row {
 /// What a [`Row`] is: a directory (togglable) or a file (opens the read pane).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RowKind {
-    /// A directory: its full path keys its expansion state.
-    Dir { path: String, expanded: bool },
+    /// A directory: its full path keys its expansion state. `change` is the aggregate
+    /// change kind of its descendants — `Some(kind)` when it holds changed files (a single
+    /// kind when they agree, else `Modified`), `None` when nothing under it changed.
+    Dir { path: String, expanded: bool, change: Option<ChangeKind> },
     /// A file: its index into the source `&[Entry]`, plus its annotation when changed.
     File { index: usize, annotation: Option<Annotation> },
 }
@@ -165,7 +167,11 @@ fn flatten<S: BuildHasher>(
             rows.push(Row {
                 depth,
                 name: display,
-                kind: RowKind::Dir { path: path.clone(), expanded },
+                kind: RowKind::Dir {
+                    path: path.clone(),
+                    expanded,
+                    change: dir_change(node, entries),
+                },
                 ignored: node.ignored,
             });
             if expanded {
@@ -197,6 +203,32 @@ fn compress<'a>(name: &str, path: String, start: &'a Dir) -> (String, String, &'
 /// `Some((name, index))` when `node` holds exactly one file and no sub-directories.
 fn lone_file(node: &Dir) -> Option<(&String, &usize)> {
     (node.dirs.is_empty() && node.files.len() == 1).then(|| node.files.iter().next().unwrap())
+}
+
+/// The aggregate change kind of everything under `node`: `None` when nothing changed, the
+/// shared kind when every changed descendant agrees, and `Modified` as the "mixed / just
+/// changed" fallback when they differ. Folds files here and sub-directories recursively so a
+/// collapsed folder still reflects a change buried deep inside it (specs/file-list.md).
+fn dir_change(node: &Dir, entries: &[Entry]) -> Option<ChangeKind> {
+    let mut acc: Option<ChangeKind> = None;
+    let mut fold = |k: ChangeKind| {
+        acc = Some(match acc {
+            None => k,
+            Some(existing) if existing == k => k,
+            Some(_) => ChangeKind::Modified,
+        });
+    };
+    for &index in node.files.values() {
+        if let Some(a) = &entries[index].annotation {
+            fold(a.change);
+        }
+    }
+    for sub in node.dirs.values() {
+        if let Some(k) = dir_change(sub, entries) {
+            fold(k);
+        }
+    }
+    acc
 }
 
 fn file_row(depth: usize, name: String, index: usize, entries: &[Entry]) -> Row {
@@ -352,5 +384,64 @@ mod tests {
         let rows = build(&[entry], &HashSet::new(), false);
         assert!(rows[0].ignored, "an ignored file row is dimmed");
         assert!(matches!(rows[0].kind, RowKind::File { .. }));
+    }
+
+    fn changed(path: &str, kind: ChangeKind) -> Entry {
+        Entry {
+            path: path.into(),
+            previous_path: None,
+            annotation: Some(Annotation { change: kind, additions: 1, deletions: 0 }),
+            ignored: false,
+            is_dir: false,
+        }
+    }
+
+    fn unchanged(path: &str) -> Entry {
+        Entry {
+            path: path.into(),
+            previous_path: None,
+            annotation: None,
+            ignored: false,
+            is_dir: false,
+        }
+    }
+
+    /// The aggregate change of the first `Dir` row whose display name matches `name`.
+    fn folder_change(rows: &[super::Row], name: &str) -> Option<ChangeKind> {
+        rows.iter()
+            .find_map(|r| match &r.kind {
+                RowKind::Dir { change, .. } if r.name == name => Some(*change),
+                _ => None,
+            })
+            .flatten()
+    }
+
+    #[test]
+    fn dir_change_aggregates_a_single_kind_up_through_a_collapsed_folder() {
+        // Both changed files under src/ are additions, so src/ reads as Added even when
+        // collapsed — the change deep inside still colours the folder at the top.
+        let entries =
+            [changed("src/a.rs", ChangeKind::Added), changed("src/nested/b.rs", ChangeKind::Added)];
+        let rows = build(&entries, &HashSet::new(), false);
+        assert_eq!(rows.len(), 1, "src/ is collapsed");
+        assert_eq!(folder_change(&rows, "src"), Some(ChangeKind::Added));
+    }
+
+    #[test]
+    fn a_folder_with_mixed_kinds_reads_as_modified() {
+        // An added file next to a deleted file: the folder can't be one kind, so it falls
+        // back to the modified accent — "this folder just has changes".
+        let entries =
+            [changed("pkg/new.rs", ChangeKind::Added), changed("pkg/gone.rs", ChangeKind::Deleted)];
+        let rows = build(&entries, &HashSet::new(), true);
+        assert_eq!(folder_change(&rows, "pkg"), Some(ChangeKind::Modified));
+    }
+
+    #[test]
+    fn a_folder_without_changed_descendants_has_no_change() {
+        // An `All files` folder holding only unchanged files carries no change colour.
+        let entries = [unchanged("docs/a.md"), unchanged("docs/b.md")];
+        let rows = build(&entries, &HashSet::new(), true);
+        assert_eq!(folder_change(&rows, "docs"), None);
     }
 }

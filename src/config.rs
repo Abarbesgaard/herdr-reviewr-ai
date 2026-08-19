@@ -190,7 +190,7 @@ impl Default for PluginConfig {
         Self {
             theme: crate::theme::DEFAULT.to_owned(),
             base_branches: DEFAULT_BASE_BRANCHES.iter().map(|s| (*s).to_owned()).collect(),
-            default_scope: crate::model::Scope::Uncommitted,
+            default_scope: crate::model::Scope::Branch,
             navigator_position: NavigatorPosition::Right,
             toggle_placement: TogglePlacement::Split,
             toggle_direction: ToggleDirection::Right,
@@ -750,7 +750,7 @@ mod tests {
         let config = super::plugin_config_in(dir.path()).unwrap();
         assert_eq!(config.theme(), "gruvbox");
         assert_eq!(config.base_branches(), PluginConfig::default().base_branches());
-        assert_eq!(config.default_scope(), Scope::Uncommitted);
+        assert_eq!(config.default_scope(), Scope::Branch);
         assert_eq!(config.navigator_position(), NavigatorPosition::Right);
         assert_eq!(config.toggle_placement(), TogglePlacement::Split);
         assert_eq!(config.toggle_direction(), ToggleDirection::Right);
@@ -1060,7 +1060,7 @@ mod tests {
         let value = PluginConfig::default().to_json();
         let object = value.as_object().unwrap();
         assert_eq!(object.len(), super::PLUGIN_CONFIG_KEYS.len(), "one JSON key per config key");
-        assert_eq!(object["default_scope"], "uncommitted");
+        assert_eq!(object["default_scope"], "branch");
         assert_eq!(object["navigator_position"], "right");
         assert_eq!(object["toggle_placement"], "split");
         assert_eq!(object["toggle_direction"], "right");
