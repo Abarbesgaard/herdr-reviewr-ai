@@ -692,13 +692,17 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
             let fill = (i == app.file_cursor).then(|| p.cursor_bg(app.focus == Focus::Files));
             let indent = "  ".repeat(row.depth);
             match &row.kind {
-                RowKind::Dir { expanded, .. } => {
+                RowKind::Dir { expanded, change, .. } => {
                     let arrow = if *expanded { "▾ " } else { "▸ " };
                     // A git-ignored directory recedes into a dim, unbolded row (file-list.md).
+                    // Otherwise a folder holding changed files takes the aggregate change-kind
+                    // colour, so a change deep in a collapsed tree is scannable at the top
+                    // (file-list.md); an unchanged folder keeps the neutral heading colour.
                     let name_style = if row.ignored {
                         Style::default().fg(p.overlay0)
                     } else {
-                        Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
+                        let fg = change.map_or(p.subtext0, |k| kind_color(p, k.marker()));
+                        Style::default().fg(fg).add_modifier(Modifier::BOLD)
                     };
                     let spans = vec![
                         Span::styled(format!("{indent}{arrow}"), Style::default().fg(p.overlay0)),
@@ -759,8 +763,18 @@ fn file_row_item(
         spans.push(Span::styled(marker, Style::default().fg(kind_color(p, a.change.marker()))));
     }
     // A git-ignored file recedes into a dim basename; its change marker and stats keep their
-    // color so a kept ignored file still reads as a change (file-list.md).
-    let base_style = if ignored { Style::default().fg(p.overlay0) } else { text_style(p) };
+    // color so a kept ignored file still reads as a change (file-list.md). Otherwise a changed
+    // file's basename takes its change-kind color — the same hue as its marker (added green,
+    // modified peach, deleted red, renamed mauve) — so the whole Changes list is scannable by
+    // colour, not just the one-glyph marker column (file-list.md). An unannotated `All files`
+    // row keeps the plain text colour.
+    let base_style = if ignored {
+        Style::default().fg(p.overlay0)
+    } else if let Some(a) = annotation {
+        Style::default().fg(kind_color(p, a.change.marker()))
+    } else {
+        text_style(p)
+    };
     // The match highlight follows the engine's spans onto the shown text, remapped across any
     // head-elision so a matched, still-visible character is never left unmarked (search.md).
     let shown_spans = remap_emphasis(emphasis, name, &shown);
@@ -1164,7 +1178,15 @@ fn render_row(row: &Row, layout: RowLayout<'_>, state: RowState) -> Vec<Line<'st
     let (bar, bar_color) = match row.marker() {
         '-' => ("▌", pal.red),
         '+' => ("▌", pal.green),
-        _ => (" ", pal.overlay0),
+        // A File-view context row wears the line-change gutter: added green, modified peach,
+        // and a red seam where lines were deleted above or below (specs/diff-view.md).
+        _ => match row.mark() {
+            crate::diff::LineMark::Added => ("▌", pal.green),
+            crate::diff::LineMark::Modified => ("▌", pal.peach),
+            crate::diff::LineMark::DeletedAbove => ("▔", pal.red),
+            crate::diff::LineMark::DeletedBelow => ("▁", pal.red),
+            crate::diff::LineMark::Unchanged => (" ", pal.overlay0),
+        },
     };
     let row_bg = if cursor {
         Some(pal.cursor_bg(focused))
@@ -3223,7 +3245,7 @@ fn kind_color(p: &Palette, marker: char) -> Color {
         'A' | '?' => p.green,
         'D' => p.red,
         'R' => p.mauve,
-        _ => p.yellow,
+        _ => p.peach,
     }
 }
 

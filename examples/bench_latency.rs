@@ -107,16 +107,16 @@ fn main() {
             sample(3, || {
                 let mut cache = DiffCache::new(); // cold: fresh cache each run
                 let c = std::fs::read_to_string(repo.join(path)).unwrap_or_default();
-                cache.get_file(path.clone(), &c, &hl);
+                cache.get_file(path.clone(), None, &c, &hl);
             }),
         );
         let mut warm = DiffCache::new();
-        warm.get_file(path.clone(), &content, &hl);
+        warm.get_file(path.clone(), None, &content, &hl);
         row(
             &format!("file open, All files WARM ({tag})"),
             sample(5, || {
                 let c = std::fs::read_to_string(repo.join(path)).unwrap_or_default();
-                warm.get_file(path.clone(), &c, &hl);
+                warm.get_file(path.clone(), None, &c, &hl);
             }),
         );
     }
