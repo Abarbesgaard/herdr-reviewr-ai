@@ -154,6 +154,9 @@ impl Highlighter {
                                 color: if color == keyword { keyword } else { self.default_fg },
                             }
                         })
+                        // The grammar leaves some T-SQL words plain (TRY/CATCH/TRANSACTION/
+                        // THROW); promote those to the keyword colour so a batch reads whole.
+                        .flat_map(|span| promote_extra_keywords(span, keyword))
                         .collect();
                 }
             }
@@ -180,6 +183,47 @@ const SQL_KEYWORDS: &[&str] = &[
     "select", "insert", "update", "delete", "with", "merge", "set", "begin", "declare", "create",
     "alter", "drop", "truncate", "exec", "execute", "use", "grant", "revoke", "call",
 ];
+
+/// T-SQL words the `sql` grammar leaves untagged, promoted to the keyword colour so a batch
+/// reads as one whole. Matched case-insensitively on word boundaries within a SQL body.
+const EXTRA_SQL_KEYWORDS: &[&str] = &["transaction", "tran", "try", "catch", "throw", "go"];
+
+/// Repaint every whole word in `span` that names a T-SQL keyword the grammar missed
+/// ([`EXTRA_SQL_KEYWORDS`]) in `keyword`, splitting the span around each so only those words
+/// change colour. A span the grammar already coloured as a keyword passes through untouched.
+fn promote_extra_keywords(span: Span, keyword: Rgb) -> Vec<Span> {
+    if span.color == keyword {
+        return vec![span];
+    }
+    let chars: Vec<char> = span.text.chars().collect();
+    let mut out: Vec<Span> = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_alphanumeric() || chars[i] == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if EXTRA_SQL_KEYWORDS.contains(&word.to_ascii_lowercase().as_str()) {
+                if !plain.is_empty() {
+                    out.push(Span { text: std::mem::take(&mut plain), color: span.color });
+                }
+                out.push(Span { text: word, color: keyword });
+            } else {
+                plain.push_str(&word);
+            }
+        } else {
+            plain.push(chars[i]);
+            i += 1;
+        }
+    }
+    if !plain.is_empty() {
+        out.push(Span { text: plain, color: span.color });
+    }
+    out
+}
 
 /// Whether `language` names C# — the one host grammar the SQL injection runs inside.
 fn is_csharp(language: Option<&str>) -> bool {
@@ -425,6 +469,20 @@ mod tests {
             assert!(
                 body.iter().filter(|s| s.text.contains(token)).all(|s| s.color == default_fg),
                 "{token} stays in the default text colour"
+            );
+        }
+    }
+
+    #[test]
+    fn sql_injection_promotes_tsql_words_the_grammar_misses() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        let src = "const string sql =\n    \"\"\"\n        BEGIN TRY\n        COMMIT TRANSACTION;\n        END TRY\n        BEGIN CATCH\n        THROW;\n        END CATCH;\n    \"\"\";\n";
+        let out = h.highlight(src, Some("cs"));
+        for word in ["TRY", "CATCH", "TRANSACTION", "THROW"] {
+            assert!(
+                line_with(&out, word).iter().any(|s| s.text == word && s.color == sql),
+                "{word} is promoted to the keyword colour"
             );
         }
     }
