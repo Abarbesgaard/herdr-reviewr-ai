@@ -62,7 +62,7 @@ Content rows are selectable for comments. A `fold` is not.
 - Changes group into hunks with a context margin of 3 unchanged lines.
 - The whole file is highlighted, not each hunk. A multi-line string or comment colors correctly inside a hunk.
 - The language is detected from the path. An unknown path renders plain.
-- Inside a C# file, a raw string literal (`"""`) holding a query highlights with the SQL grammar rather than as flat string text — an embedded-language injection. It fires when the body begins with a SQL statement keyword (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, `MERGE`), or when a `lang=sql` / `language=sql` marker sits on or just above the opening delimiter. Non-SQL strings and non-C# files are untouched. A contiguous SQL body shares one highlight pass, so a multi-line SQL construct carries across its lines.
+- Inside a C# file, a raw string literal (`"""`) holding a query highlights its SQL statement keywords rather than reading as flat string text — an embedded-language injection. It fires when the body begins with a SQL statement keyword (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, `MERGE`, `SET`, `BEGIN`, `DECLARE`, and the other DDL/batch openers), or when a `lang=sql` / `language=sql` marker sits on or just above the opening delimiter. Only the keywords are tinted; identifiers, numbers, operators, and `@name` parameters stay in the default text colour, for a calm single-accent look. Non-SQL strings and non-C# files are untouched. A contiguous SQL body shares one highlight pass, so a multi-line SQL construct carries across its lines.
 - The diff and highlighting are cached by content. A poll that finds the file unchanged recomputes nothing.
 
 ### Word emphasis
