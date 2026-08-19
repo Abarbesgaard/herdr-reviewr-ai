@@ -74,7 +74,8 @@ Content rows are selectable for comments. A `fold` is not.
 ### File view
 
 - The `FileDiff` is built from current content alone: every line a `context` row, no change rows, no emphasis, no folds.
-- The gutter shows the new-line number and a blank change bar.
+- The gutter shows the new-line number and a change bar for a file that changed in the active scope: green on an added line, peach on a modified line, and a red seam (a top rule above the following line, or a bottom rule under the last line) where lines were deleted. The bar marks the line only — there is no full-line tint, unlike Diff view. An unchanged file, and every unchanged line, shows a blank bar.
+- The change marks come from a line diff against the base content (the scope's old side). A file the scope reports unchanged is browsed without a base read.
 - Highlighting, wrapping, horizontal scroll, selection, and comments behave exactly as in Diff view.
 - A `binary` or `too_large` file degrades to a notice, worded `file too large` here and `file too large to diff` in Diff view.
 

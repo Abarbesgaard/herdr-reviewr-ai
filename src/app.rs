@@ -1139,7 +1139,11 @@ impl App {
             (FileDiff::too_large_notice(path.to_string()), String::new())
         } else {
             let content = worktree_content(&self.repo, path);
-            let diff = self.cache.get_file(path.to_string(), &content, &self.highlighter);
+            // A changed file carries its base content so the File view can mark which lines
+            // changed in the gutter; an unchanged browse skips the base read (specs/diff-view.md).
+            let old = self.changed.contains_key(path).then(|| self.content_sides(path, None).0);
+            let diff =
+                self.cache.get_file(path.to_string(), old.as_deref(), &content, &self.highlighter);
             (diff, content)
         }
     }
