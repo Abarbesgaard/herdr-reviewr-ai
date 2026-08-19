@@ -77,7 +77,19 @@ impl Highlighter {
     /// known `language` — or no loaded theme — every line is a single plain span in the
     /// default color. `language` matches as an extension first (paths), then as a token
     /// name (markdown fence tags like `rust` or `python`).
+    ///
+    /// For a C# file the result is then passed through [`inject_sql`](Self::inject_sql), so a
+    /// raw string literal holding a SQL query colours with the SQL grammar rather than as flat
+    /// string text (specs/diff-view.md).
     pub fn highlight(&self, content: &str, language: Option<&str>) -> Vec<Vec<Span>> {
+        let base = self.highlight_base(content, language);
+        if is_csharp(language) { self.inject_sql(content, base) } else { base }
+    }
+
+    /// The plain single-grammar highlight: `content` tokenized by `language`'s syntax against
+    /// the shared set, or one default-colour span per line when the language or theme is
+    /// unknown.
+    fn highlight_base(&self, content: &str, language: Option<&str>) -> Vec<Vec<Span>> {
         let syntaxes = syntaxes();
         let syntax = language.and_then(|lang| {
             syntaxes.find_syntax_by_extension(lang).or_else(|| syntaxes.find_syntax_by_token(lang))
@@ -109,6 +121,196 @@ impl Highlighter {
         }
         out
     }
+
+    /// Overlay SQL highlighting onto the body lines of any C# raw string literal that reads as
+    /// SQL — one whose body begins with a SQL keyword, or that carries a `lang=sql` /
+    /// `language=sql` marker on or just above its opening. Only the SQL grammar's statement
+    /// keywords are coloured; every other token (identifiers, numbers, operators, parameters,
+    /// strings) is left in the default text colour, for a calm single-accent look that makes
+    /// the SQL structure stand out without a busy palette. A contiguous block shares one
+    /// stateful pass so multi-line constructs carry across lines. Lines outside a SQL body
+    /// keep their C# highlighting (specs/diff-view.md).
+    fn inject_sql(&self, content: &str, mut base: Vec<Vec<Span>>) -> Vec<Vec<Span>> {
+        let Some(theme) = self.theme.as_ref() else { return base };
+        let syntaxes = syntaxes();
+        let Some(sql) = syntaxes.find_syntax_by_token("sql") else { return base };
+        let keyword = self.sql_keyword_rgb();
+        let lines: Vec<&str> = content.lines().collect();
+        for region in sql_regions(&lines) {
+            let mut h = HighlightLines::new(sql, theme);
+            for i in region {
+                let Some(slot) = base.get_mut(i) else { break };
+                let with_nl = format!("{}\n", lines[i]);
+                if let Ok(regions) = h.highlight_line(&with_nl, syntaxes) {
+                    *slot = regions
+                        .into_iter()
+                        .map(|(style, text)| {
+                            let color =
+                                (style.foreground.r, style.foreground.g, style.foreground.b);
+                            Span {
+                                text: text.trim_end_matches('\n').to_string(),
+                                // Keep only what the grammar paints as a keyword; flatten the
+                                // rest to plain text.
+                                color: if color == keyword { keyword } else { self.default_fg },
+                            }
+                        })
+                        // The grammar leaves some T-SQL words plain (TRY/CATCH/TRANSACTION/
+                        // THROW); promote those to the keyword colour so a batch reads whole.
+                        .flat_map(|span| promote_extra_keywords(span, keyword))
+                        .collect();
+                }
+            }
+        }
+        base
+    }
+
+    /// The colour the SQL grammar assigns a statement keyword, read from the grammar itself so
+    /// the keyword-only filter matches exactly what the grammar paints — not a theme scope
+    /// lookup that could resolve to a near-but-different hue (specs/diff-view.md).
+    fn sql_keyword_rgb(&self) -> Rgb {
+        self.highlight_base("SELECT 1\n", Some("sql"))
+            .first()
+            .and_then(|line| line.iter().find(|s| s.text == "SELECT"))
+            .map_or(self.default_fg, |s| s.color)
+    }
+}
+
+/// The SQL statement keywords that mark a raw-string body as an embedded query, matched
+/// case-insensitively against the first non-blank body line. Covers plain queries and the
+/// T-SQL batch/DDL/procedure openers (`set`, `begin`, `declare`, …) so a transaction script
+/// that opens with `SET TRANSACTION …` is recognised too.
+const SQL_KEYWORDS: &[&str] = &[
+    "select", "insert", "update", "delete", "with", "merge", "set", "begin", "declare", "create",
+    "alter", "drop", "truncate", "exec", "execute", "use", "grant", "revoke", "call",
+];
+
+/// T-SQL words the `sql` grammar leaves untagged, promoted to the keyword colour so a batch
+/// reads as one whole. Matched case-insensitively on word boundaries within a SQL body.
+const EXTRA_SQL_KEYWORDS: &[&str] = &["transaction", "tran", "try", "catch", "throw", "go"];
+
+/// Repaint every whole word in `span` that names a T-SQL keyword the grammar missed
+/// ([`EXTRA_SQL_KEYWORDS`]) in `keyword`, splitting the span around each so only those words
+/// change colour. A span the grammar already coloured as a keyword passes through untouched.
+fn promote_extra_keywords(span: Span, keyword: Rgb) -> Vec<Span> {
+    if span.color == keyword {
+        return vec![span];
+    }
+    let chars: Vec<char> = span.text.chars().collect();
+    let mut out: Vec<Span> = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_alphanumeric() || chars[i] == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if EXTRA_SQL_KEYWORDS.contains(&word.to_ascii_lowercase().as_str()) {
+                if !plain.is_empty() {
+                    out.push(Span { text: std::mem::take(&mut plain), color: span.color });
+                }
+                out.push(Span { text: word, color: keyword });
+            } else {
+                plain.push_str(&word);
+            }
+        } else {
+            plain.push(chars[i]);
+            i += 1;
+        }
+    }
+    if !plain.is_empty() {
+        out.push(Span { text: plain, color: span.color });
+    }
+    out
+}
+
+/// Whether `language` names C# — the one host grammar the SQL injection runs inside.
+fn is_csharp(language: Option<&str>) -> bool {
+    matches!(language, Some("cs" | "csx" | "csharp" | "c#"))
+}
+
+/// Whether a line carries the ReSharper/Rider embedded-language hint (`lang=sql` or
+/// `language=sql`, in any comment form), matched case-insensitively.
+fn has_sql_marker(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("lang=sql") || lower.contains("language=sql")
+}
+
+/// The length of the trailing run of `"` that opens a multi-line raw string literal — a line
+/// ending (after trailing whitespace) in three or more double-quotes. `None` when the line
+/// does not open a raw string, so a closing line like `""";` (ending in `;`) is never taken
+/// for an opening.
+fn opening_raw_delim(line: &str) -> Option<usize> {
+    let trimmed = line.trim_end();
+    let run = trimmed.chars().rev().take_while(|&c| c == '"').count();
+    (run >= 3).then_some(run)
+}
+
+/// Whether `line` closes a raw string opened with `delim` quotes — it holds a run of at least
+/// `delim` consecutive double-quotes (typically `"""` alone or followed by `;`/`,`/`)`).
+fn closes_raw(line: &str, delim: usize) -> bool {
+    let mut run = 0usize;
+    for c in line.chars() {
+        if c == '"' {
+            run += 1;
+            if run >= delim {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    false
+}
+
+/// Whether the first non-blank line in `body` begins with a SQL statement keyword on a word
+/// boundary — the heuristic that a raw string holds a query.
+fn body_is_sql(lines: &[&str], body: std::ops::Range<usize>) -> bool {
+    for k in body {
+        let trimmed = lines[k].trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        return SQL_KEYWORDS.iter().any(|kw| {
+            lower.strip_prefix(kw).is_some_and(|rest| {
+                rest.chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '_')
+            })
+        });
+    }
+    false
+}
+
+/// The body-line ranges of every raw string literal that reads as SQL. A literal qualifies
+/// when a `lang=sql` marker sits on or within two lines above its opening, or its body begins
+/// with a SQL keyword. Body lines are those strictly between the opening and closing delimiter
+/// lines (specs/diff-view.md).
+fn sql_regions(lines: &[&str]) -> Vec<std::ops::Range<usize>> {
+    let mut regions = Vec::new();
+    let mut last_marker: Option<usize> = None;
+    let mut i = 0;
+    while i < lines.len() {
+        if has_sql_marker(lines[i]) {
+            last_marker = Some(i);
+        }
+        if let Some(delim) = opening_raw_delim(lines[i]) {
+            let marked = last_marker.is_some_and(|m| i - m <= 2);
+            let body_start = i + 1;
+            let close = (body_start..lines.len()).find(|&j| closes_raw(lines[j], delim));
+            if let Some(end) = close {
+                let body = body_start..end;
+                if body.start < body.end && (marked || body_is_sql(lines, body.clone())) {
+                    regions.push(body);
+                }
+                last_marker = None;
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    regions
 }
 
 #[cfg(test)]
@@ -152,6 +354,136 @@ mod tests {
             let h = Highlighter::new(theme::resolve(Some(name)).syntax);
             let spans = h.highlight("let x = 1;\n", Some("rs"));
             assert!(spans[0].len() > 1, "{name}: bundled syntax theme failed to load");
+        }
+    }
+
+    /// The colour the SQL grammar gives a statement keyword like `SELECT`, distinct from the
+    /// flat string colour C# gives the same text. Taken from a standalone SQL highlight so the
+    /// injection assertions compare against the real grammar output, not a hard-coded hue.
+    fn sql_keyword_color(h: &Highlighter) -> super::Rgb {
+        let line = &h.highlight("SELECT 1\n", Some("sql"))[0];
+        line.iter().find(|s| s.text == "SELECT").expect("sql colours SELECT").color
+    }
+
+    /// The spans of the line whose text contains `needle`, for scoping an assertion to one
+    /// body line rather than the whole file (where `var`/`const` keywords share the SQL
+    /// keyword hue).
+    fn line_with<'a>(out: &'a [Vec<super::Span>], needle: &str) -> &'a [super::Span] {
+        out.iter().find(|l| l.iter().any(|s| s.text.contains(needle))).expect("line present")
+    }
+
+    #[test]
+    fn sql_injection_colours_a_raw_string_body_that_looks_like_sql() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        // A raw string whose body begins with SELECT — the pling-backend pattern, no marker.
+        let src =
+            "const string sql =\n    \"\"\"\n        SELECT CaseId\n        FROM T\n    \"\"\";\n";
+        let out = h.highlight(src, Some("cs"));
+        assert!(
+            line_with(&out, "SELECT").iter().any(|s| s.text.trim() == "SELECT" && s.color == sql),
+            "SELECT in the body is coloured by the SQL grammar"
+        );
+        assert!(
+            line_with(&out, "FROM").iter().any(|s| s.text.trim() == "FROM" && s.color == sql),
+            "FROM in the body is coloured by the SQL grammar"
+        );
+    }
+
+    #[test]
+    fn sql_injection_respects_a_lang_marker_and_leaves_plain_strings_alone() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+
+        // A body that does NOT begin with a SQL keyword still highlights when marked.
+        let marked = "// language=sql\nconst string q =\n    \"\"\"\n        exec sp_do @x\n        SELECT 1\n    \"\"\";\n";
+        let out = h.highlight(marked, Some("cs"));
+        assert!(
+            line_with(&out, "SELECT").iter().any(|s| s.text.trim() == "SELECT" && s.color == sql),
+            "a lang=sql marker forces SQL highlighting on a body the heuristic would skip"
+        );
+
+        // A prose string that happens to live in a raw literal is left as a C# string: its
+        // body line carries no SQL-grammar colour.
+        let prose = "var msg =\n    \"\"\"\n        Dear user, your order shipped.\n    \"\"\";\n";
+        let out = h.highlight(prose, Some("cs"));
+        assert!(
+            !line_with(&out, "Dear").iter().any(|s| s.color == sql),
+            "a non-SQL raw string keeps its C# string colour"
+        );
+    }
+
+    #[test]
+    fn sql_injection_only_runs_inside_csharp() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        // The same raw-string text in a Rust file is not a C# host — no SQL injection.
+        let src = "let s =\n    \"\"\"\n        SELECT 1\n    \"\"\";\n";
+        let cs = h.highlight(src, Some("cs"));
+        let rust = h.highlight(src, Some("rs"));
+        assert!(
+            line_with(&cs, "SELECT").iter().any(|s| s.text.trim() == "SELECT" && s.color == sql),
+            "C# host injects SQL"
+        );
+        assert!(
+            !line_with(&rust, "SELECT").iter().any(|s| s.color == sql),
+            "a non-C# file is never SQL-injected"
+        );
+    }
+
+    #[test]
+    fn sql_injection_recognises_a_transaction_batch_opening_with_set() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        // A T-SQL batch that opens with SET, not a query verb — the second pling-backend case.
+        let src = "const string sql =\n    \"\"\"\n        SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\n        BEGIN TRANSACTION;\n        SELECT CaseId FROM T;\n    \"\"\";\n";
+        let out = h.highlight(src, Some("cs"));
+        assert!(
+            line_with(&out, "SET").iter().any(|s| s.text.trim() == "SET" && s.color == sql),
+            "SET opens the batch and is coloured by the SQL grammar"
+        );
+        assert!(
+            line_with(&out, "BEGIN").iter().any(|s| s.text.trim() == "BEGIN" && s.color == sql),
+            "the batch body keeps highlighting past the opening line"
+        );
+    }
+
+    #[test]
+    fn sql_injection_colours_only_keywords_leaving_the_rest_plain() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        let default_fg = (0xcd, 0xd6, 0xf4);
+        // A body with a number, an operator, and a Dapper parameter alongside the keywords.
+        let src = "const string sql =\n    \"\"\"\n        SELECT CaseId FROM T WHERE Id = @Id AND Rank > 1\n    \"\"\";\n";
+        let out = h.highlight(src, Some("cs"));
+        let body = line_with(&out, "SELECT");
+        // Keywords carry the SQL keyword colour.
+        for kw in ["SELECT", "FROM", "WHERE"] {
+            assert!(
+                body.iter().any(|s| s.text.trim() == kw && s.color == sql),
+                "{kw} is coloured as a keyword"
+            );
+        }
+        // Everything the grammar would otherwise tint — number, operator, parameter — is plain.
+        for token in ["@Id", "1", "="] {
+            assert!(
+                body.iter().filter(|s| s.text.contains(token)).all(|s| s.color == default_fg),
+                "{token} stays in the default text colour"
+            );
+        }
+    }
+
+    #[test]
+    fn sql_injection_promotes_tsql_words_the_grammar_misses() {
+        let h = Highlighter::new(mocha());
+        let sql = sql_keyword_color(&h);
+        let src = "const string sql =\n    \"\"\"\n        BEGIN TRY\n        COMMIT TRANSACTION;\n        END TRY\n        BEGIN CATCH\n        THROW;\n        END CATCH;\n    \"\"\";\n";
+        let out = h.highlight(src, Some("cs"));
+        for word in ["TRY", "CATCH", "TRANSACTION", "THROW"] {
+            assert!(
+                line_with(&out, word).iter().any(|s| s.text == word && s.color == sql),
+                "{word} is promoted to the keyword colour"
+            );
         }
     }
 }
