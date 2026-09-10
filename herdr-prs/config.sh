@@ -35,6 +35,13 @@ ROOTS=(
 : "${PRS_RICH:=0}"
 if [[ "$PRS_RICH" == 1 ]]; then PRS_CI=1; PRS_REVIEW=1; fi
 
+# Dim, non-selectable info line under each PR row: source branch (and → base
+# when it isn't main/master), coloured diff size (+adds green / -dels red), and
+# last activity ("3h ago"). On by default. j/k skip over it — it's information
+# only. Built from cheap scalar fields, so it adds NO extra GraphQL cost over the
+# base fetch. Set to 0 to drop the line.
+: "${PRS_DETAIL:=1}"
+
 # How many repos to query in parallel. Higher = faster, more concurrent gh calls.
 : "${PRS_FETCH_PARALLEL:=8}"
 
@@ -69,3 +76,21 @@ if [[ "$PRS_RICH" == 1 ]]; then PRS_CI=1; PRS_REVIEW=1; fi
 #                shell                       (a plain shell)
 : "${AGENT_CMD:=command copilot}"
 : "${REVIEWER:=plugin:persiyanov.reviewr:pane}"
+
+# Enter on a PR pops a small menu of ways to start the agent (pick-action.sh).
+# The first entry is always a CLEAN agent (no prompt); the rest prefill the
+# agent with an instruction that it auto-runs. Each entry is a single string
+# "Label<TAB>prompt"; an empty prompt means "clean agent". In the prompt, {repo}
+# expands to owner/repo and {num} to the PR number. A non-empty prompt is passed
+# to the agent as: $AGENT_CMD $AGENT_PROMPT_FLAG "<prompt>"  (copilot's -i flag
+# starts interactive mode and auto-executes the prompt).
+: "${AGENT_PROMPT_FLAG:=-i}"
+if [[ -z "${PRS_ACTIONS+x}" ]]; then
+  PRS_ACTIONS=(
+    $'Clean agent\t'
+    $'Fix failing PR (via_restitutio)\tPR {repo}#{num} is failing its build/CI. Your first tool call must be mcp__sara__begin to found the task and recall prior fixes; run no gh/git/shell/read/search before it. Then work the via_restitutio skill to restore it to a green, consistent state.'
+    $'Fix a bug (via_emendatio)\tPR {repo}#{num} has a bug. Your first tool call must be mcp__sara__begin to found the task and recall prior art; run nothing before it. Then work the via_emendatio skill: reproduce it with a failing test, mend it, and prove the whole suite is green.'
+    $'Address review comments (via_renovatio)\tAddress the review comments on PR {repo}#{num}. Your first tool call must be mcp__sara__begin to found the task and recall prior art; run nothing before it. Then work the via_renovatio skill to improve the code without changing its behaviour.'
+    $'Investigate (via_exploratio)\tInvestigate PR {repo}#{num}. Your first tool call must be mcp__sara__begin to found the task and recall prior findings; run nothing before it. Then work the via_exploratio skill to understand it without changing any production code.'
+  )
+fi
