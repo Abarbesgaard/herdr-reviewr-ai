@@ -78,13 +78,13 @@ The list is a flat sequence of visible rows over the tree.
 
 - A file row is `<marker> <name> <stats>`: the marker colored by kind, the basename colored the same by change kind (added green, modified peach, deleted red, renamed mauve — `theme.md`) so the list is scannable by colour, parent directories dimmed, stats right-aligned. An unchanged `All files` row keeps the plain text colour.
 - A directory row colours its name by the aggregate change of everything beneath it: the shared kind when its changed descendants agree, the modified accent when they differ, and the neutral heading colour when nothing under it changed. The change propagates up, so a collapsed folder still signals a change buried deep inside it. An ignored directory stays dimmed regardless.
+- A reviewed file greys whole (the dim role), its change marker swapped for a check, so files already looked at recede and the eye lands on what is left. `toggle-reviewed` marks the file under the cursor and unmarks it on a second press (`input.md`); the state is keyed by path, so it survives a poll and a scope switch. The Files pane title carries the progress — `Files  2/5 reviewed` — counting reviewed files over the active changeset, shown once at least one is reviewed.
 - Stats read `+added −removed`: additions green, deletions red, a zero side dropped. A change with no countable lines (a binary file) shows no stats.
 - An ignored row dims whole, distinct from the marker colors. `All files` is the one place an ignored path is readable. An ignored file never carries a change marker, since every scope respects `.gitignore` (`review-model.md`).
 - A too-narrow path shortens with a middle ellipsis (`…/2026-06-23-changes/plan`), keeping the basename and stats visible.
 
 ## Non-goals
 
-- No reviewed-file state. Marking a file reviewed and greying it is roadmap.
 - No file content rendered here. The read pane renders the diff or content (`diff-view.md`).
 
 ## Related specs

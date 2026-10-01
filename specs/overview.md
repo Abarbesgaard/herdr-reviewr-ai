@@ -50,12 +50,12 @@ to move the work forward.
 - Keyboard and mouse input (`input.md`).
 - Full-screen search over the worktree: fuzzy file names and literal code with a live preview, ranking owned by the engine (`search.md`).
 - In-file find in the read pane: literal match highlighting and match-to-match stepping (`find-in-file.md`).
+- Reviewed-file state: marking a file reviewed greys it in the list and counts toward the Files-pane progress (`file-list.md`).
 
 ## Roadmap
 
 Named so the architecture stays open to them. None is part of this design.
 
-- Reviewed-file state: marking a file reviewed and greying it in the list.
 - Hopping between the agent's changed files while browsing `All files`.
 - A side-by-side split diff view for wide panes.
 - Search on `Changes`, scoped to the changeset.

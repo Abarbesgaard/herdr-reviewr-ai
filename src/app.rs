@@ -422,6 +422,10 @@ pub struct App {
     /// (expanded by default), expanded in `All files` (collapsed by default). Keyed by path,
     /// so it survives a poll that rebuilds the tree.
     toggled_dirs: HashSet<String>,
+    /// Repo-relative paths the reviewer has marked reviewed. Keyed by path so it survives a
+    /// poll that rebuilds the tree and a scope switch. Reviewed files grey out in the list
+    /// and count toward the Files-pane progress (specs/file-list.md).
+    reviewed: HashSet<String>,
     /// The inactive tab's saved state, swapped in on a tab switch.
     stash: TabStash,
     /// The active scope's changed files, keyed by repo-relative path and recomputed every
@@ -635,6 +639,7 @@ impl App {
             armed_cross: None,
             resume_list: false,
             toggled_dirs: HashSet::new(),
+            reviewed: HashSet::new(),
             stash: TabStash::default(),
             changed: HashMap::new(),
             diff: FileDiff::empty(),
@@ -840,6 +845,7 @@ impl App {
                 self.select_anchor = old.select_anchor;
                 self.resume_list = old.resume_list;
                 self.toggled_dirs = std::mem::take(&mut old.toggled_dirs);
+                self.reviewed = std::mem::take(&mut old.reviewed);
                 self.stash = std::mem::take(&mut old.stash);
                 self.wrap = old.wrap;
                 self.preview = old.preview;
@@ -893,6 +899,38 @@ impl App {
     /// row (or an empty list).
     pub fn current_entry(&self) -> Option<&Entry> {
         self.file_under_cursor_index().map(|i| &self.entries[i])
+    }
+
+    /// The file the reviewed toggle acts on: the file under the cursor, or the open file when
+    /// the cursor rests on a directory (or the diff is focused).
+    fn reviewing_path(&self) -> Option<String> {
+        self.current_entry().map(|e| e.path.clone()).or_else(|| self.diff_path.clone())
+    }
+
+    /// Whether `path` is marked reviewed.
+    #[must_use]
+    pub fn is_reviewed(&self, path: &str) -> bool {
+        self.reviewed.contains(path)
+    }
+
+    /// Toggle the reviewed state of the file under the cursor (or the open file). A reviewed
+    /// file greys out in the list and counts toward the Files-pane progress
+    /// (specs/file-list.md).
+    pub fn toggle_reviewed(&mut self) {
+        let Some(path) = self.reviewing_path() else { return };
+        if !self.reviewed.remove(&path) {
+            self.reviewed.insert(path);
+        }
+    }
+
+    /// Reviewed progress over the active changeset: `(reviewed, total)` counting only files
+    /// the active scope changed. Reviewed paths outside the changeset do not inflate the
+    /// total, so the count always reads against what there is to review.
+    #[must_use]
+    pub fn review_progress(&self) -> (usize, usize) {
+        let total = self.changed.len();
+        let done = self.changed.keys().filter(|p| self.reviewed.contains(*p)).count();
+        (done, total)
     }
 
     /// A directory's resting state in the active tab: `Changes` opens expanded, `All files`
@@ -3983,7 +4021,7 @@ fn anchor(selected: &[Row]) -> Option<(Side, u32, u32, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Mode};
+    use super::{Annotation, App, Entry, Mode, RowKind};
     use crate::config::NavigatorPosition;
     use crate::model::{Comment, Scope, Side};
     use std::path::PathBuf;
@@ -4331,5 +4369,69 @@ mod tests {
         assert_eq!(removed, 2);
         assert!(app.store.is_empty(), "resolving the rest empties the store");
         assert_eq!(app.focus, crate::Focus::Diff, "an emptied rail returns focus to the diff");
+    }
+
+    fn app_with_changeset(paths: &[&str]) -> App {
+        use crate::file_list::Row;
+        use crate::model::ChangeKind;
+        let mut app = App::new(PathBuf::from("."), Scope::Uncommitted, None);
+        let annotation = || Annotation { change: ChangeKind::Modified, additions: 1, deletions: 0 };
+        app.entries = paths
+            .iter()
+            .map(|p| Entry {
+                path: (*p).to_string(),
+                previous_path: None,
+                annotation: Some(annotation()),
+                ignored: false,
+                is_dir: false,
+            })
+            .collect();
+        app.file_rows = paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Row {
+                depth: 0,
+                name: p.rsplit('/').next().unwrap().to_string(),
+                kind: RowKind::File { index: i, annotation: Some(annotation()) },
+                ignored: false,
+            })
+            .collect();
+        for p in paths {
+            app.changed.insert((*p).to_string(), annotation());
+        }
+        app.file_cursor = 0;
+        app
+    }
+
+    #[test]
+    fn toggle_reviewed_marks_the_file_under_the_cursor_and_a_second_press_clears_it() {
+        let mut app = app_with_changeset(&["src/a.rs", "src/b.rs"]);
+        assert!(!app.is_reviewed("src/a.rs"), "nothing is reviewed at first");
+
+        app.toggle_reviewed();
+        assert!(app.is_reviewed("src/a.rs"), "the file under the cursor is now reviewed");
+        assert!(!app.is_reviewed("src/b.rs"), "only the cursor's file is marked");
+
+        app.toggle_reviewed();
+        assert!(!app.is_reviewed("src/a.rs"), "a second press clears the reviewed state");
+    }
+
+    #[test]
+    fn review_progress_counts_reviewed_files_over_the_changeset() {
+        let mut app = app_with_changeset(&["src/a.rs", "src/b.rs", "src/c.rs"]);
+        assert_eq!(app.review_progress(), (0, 3), "three changed, none reviewed");
+
+        app.toggle_reviewed(); // src/a.rs
+        app.file_cursor = 2;
+        app.toggle_reviewed(); // src/c.rs
+        assert_eq!(app.review_progress(), (2, 3), "two of three reviewed");
+
+        // A reviewed path no longer in the changeset does not inflate the count.
+        app.changed.remove("src/c.rs");
+        assert_eq!(
+            app.review_progress(),
+            (1, 2),
+            "the count reads against what there is to review"
+        );
     }
 }

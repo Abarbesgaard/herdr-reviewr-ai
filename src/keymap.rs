@@ -33,6 +33,7 @@ pub enum Action {
     NextComment,
     PrevComment,
     Comments,
+    ToggleReviewed,
     Search,
     Find,
     Keys,
@@ -85,7 +86,7 @@ impl std::fmt::Display for Key {
 
 /// Every action with its config name and default keys — the single source the default keymap,
 /// the name lookup, and the config error message are built from.
-const ACTIONS: [(Action, &str, &[Key]); 34] = [
+const ACTIONS: [(Action, &str, &[Key]); 35] = [
     (Action::Down, "down", &[Key::plain('j')]),
     (Action::Up, "up", &[Key::plain('k')]),
     (Action::NextHunk, "next-hunk", &[Key::plain(']')]),
@@ -112,6 +113,7 @@ const ACTIONS: [(Action, &str, &[Key]); 34] = [
     (Action::NextComment, "next-comment", &[Key::plain('n')]),
     (Action::PrevComment, "prev-comment", &[Key::plain('N')]),
     (Action::Comments, "comments", &[Key::plain('l')]),
+    (Action::ToggleReviewed, "toggle-reviewed", &[Key::plain('x')]),
     (Action::Search, "search", &[Key::plain('/')]),
     (Action::Find, "find", &[Key::ctrl('f')]),
     (Action::Keys, "keys", &[Key::plain('?')]),
@@ -250,7 +252,8 @@ mod tests {
         assert_eq!(keymap.action_for(Key::plain('m')), Some(Action::Preview));
         assert_eq!(keymap.action_for(Key::plain('p')), Some(Action::NavigatorPosition));
         assert_eq!(keymap.action_for(Key::plain('z')), Some(Action::NavigatorHide));
-        assert_eq!(keymap.action_for(Key::plain('x')), None);
+        assert_eq!(keymap.action_for(Key::plain('x')), Some(Action::ToggleReviewed));
+        assert_eq!(keymap.action_for(Key::plain('g')), None, "an unbound key answers nothing");
         assert_eq!(keymap.action_for(Key::plain('?')), Some(Action::Keys));
         assert_eq!(keymap.hint(Action::Send), Key::plain('s'));
         assert_eq!(keymap.hint(Action::TabPr), Key::plain('3'));
@@ -277,10 +280,10 @@ mod tests {
         assert_eq!(keymap.action_for(Key::plain('c')), Some(Action::Comment));
         assert_eq!(keymap.action_for(Key::plain('v')), Some(Action::Select));
 
-        let keymap = Keymap::resolve(&[(Action::Send, vec![Key::plain('x')])]).unwrap();
+        let keymap = Keymap::resolve(&[(Action::Send, vec![Key::plain('g')])]).unwrap();
         assert_eq!(keymap.action_for(Key::plain('s')), None);
         assert_eq!(keymap.action_for(Key::plain('S')), None);
-        assert_eq!(keymap.action_for(Key::plain('x')), Some(Action::Send));
+        assert_eq!(keymap.action_for(Key::plain('g')), Some(Action::Send));
     }
 
     #[test]
@@ -293,8 +296,8 @@ mod tests {
         assert_eq!(keymap.action_for(Key::ctrl('f')), None, "the default chord is freed");
 
         // And to a bare key, demoting the chord action to a plain character.
-        let keymap = Keymap::resolve(&[(Action::Find, vec![Key::plain('x')])]).unwrap();
-        assert_eq!(keymap.action_for(Key::plain('x')), Some(Action::Find));
+        let keymap = Keymap::resolve(&[(Action::Find, vec![Key::plain('g')])]).unwrap();
+        assert_eq!(keymap.action_for(Key::plain('g')), Some(Action::Find));
         assert_eq!(keymap.action_for(Key::ctrl('f')), None);
     }
 

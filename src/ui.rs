@@ -665,7 +665,15 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     let p = app.palette();
-    let block = bordered("Files", app.focus == Focus::Files, p);
+    // The pane title carries reviewed progress once there is a changeset to work through, so
+    // the reviewer sees how much is left without leaving the list (specs/file-list.md).
+    let (done, total) = app.review_progress();
+    let title = if total > 0 && done > 0 {
+        format!("Files  {done}/{total} reviewed")
+    } else {
+        "Files".to_string()
+    };
+    let block = bordered(&title, app.focus == Focus::Files, p);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -710,12 +718,13 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
                     ];
                     selectable_row(p, spans, width, fill)
                 }
-                RowKind::File { annotation, .. } => file_row_item(
+                RowKind::File { annotation, index } => file_row_item(
                     &FileRowSpec {
                         indent: &indent,
                         annotation: annotation.as_ref(),
                         name: &row.name,
                         ignored: row.ignored,
+                        reviewed: app.is_reviewed(&app.entries[*index].path),
                         emphasis: &[],
                     },
                     width,
@@ -737,6 +746,9 @@ struct FileRowSpec<'a> {
     annotation: Option<&'a Annotation>,
     name: &'a str,
     ignored: bool,
+    /// The reviewer marked this file reviewed: it greys out and its change marker becomes a
+    /// check (specs/file-list.md).
+    reviewed: bool,
     emphasis: &'a [(u32, u32)],
 }
 
@@ -750,8 +762,14 @@ fn file_row_item(
     fill: Option<Color>,
     p: &Palette,
 ) -> ListItem<'static> {
-    let FileRowSpec { indent, annotation, name, ignored, emphasis } = *row;
-    let marker = annotation.map_or(String::new(), |a| format!("{} ", a.change.marker()));
+    let FileRowSpec { indent, annotation, name, ignored, reviewed, emphasis } = *row;
+    // A reviewed file swaps its change marker for a check and greys whole, so the eye skips
+    // what is already done and lands on what is left (specs/file-list.md).
+    let marker = if reviewed {
+        "✓ ".to_string()
+    } else {
+        annotation.map_or(String::new(), |a| format!("{} ", a.change.marker()))
+    };
     let (additions, deletions) = annotation.map_or((0, 0), |a| (a.additions, a.deletions));
     let stats = stats_str(additions, deletions);
     let gap = if stats.is_empty() { 0 } else { 2 };
@@ -759,16 +777,19 @@ fn file_row_item(
     let shown = elide_head(name, width.saturating_sub(fixed).max(1));
 
     let mut spans = vec![Span::styled(indent.to_string(), text_style(p))];
-    if let Some(a) = annotation {
+    if reviewed {
+        spans.push(Span::styled(marker, Style::default().fg(p.overlay0)));
+    } else if let Some(a) = annotation {
         spans.push(Span::styled(marker, Style::default().fg(kind_color(p, a.change.marker()))));
     }
-    // A git-ignored file recedes into a dim basename; its change marker and stats keep their
-    // color so a kept ignored file still reads as a change (file-list.md). Otherwise a changed
-    // file's basename takes its change-kind color — the same hue as its marker (added green,
-    // modified peach, deleted red, renamed mauve) — so the whole Changes list is scannable by
-    // colour, not just the one-glyph marker column (file-list.md). An unannotated `All files`
-    // row keeps the plain text colour.
-    let base_style = if ignored {
+    // A reviewed file greys whole (overlay0), overriding its change colour so the done files
+    // recede (specs/file-list.md). A git-ignored file recedes into a dim basename; its change
+    // marker and stats keep their color so a kept ignored file still reads as a change
+    // (file-list.md). Otherwise a changed file's basename takes its change-kind color — the
+    // same hue as its marker (added green, modified peach, deleted red, renamed mauve) — so the
+    // whole Changes list is scannable by colour, not just the one-glyph marker column
+    // (file-list.md). An unannotated `All files` row keeps the plain text colour.
+    let base_style = if reviewed || ignored {
         Style::default().fg(p.overlay0)
     } else if let Some(a) = annotation {
         Style::default().fg(kind_color(p, a.change.marker()))
@@ -801,7 +822,11 @@ fn file_row_item(
         let used: usize = spans.iter().map(Span::width).sum();
         let pad = width.saturating_sub(used + stats.width());
         spans.push(Span::raw(" ".repeat(pad)));
-        spans.extend(stats_spans(additions, deletions, p));
+        if reviewed {
+            spans.push(Span::styled(stats, Style::default().fg(p.overlay0)));
+        } else {
+            spans.extend(stats_spans(additions, deletions, p));
+        }
     }
     selectable_row(p, spans, width, fill)
 }
@@ -2320,6 +2345,7 @@ fn render_search_results(
                         annotation: app.changed_annotation(path),
                         name: path,
                         ignored: false,
+                        reviewed: false,
                         emphasis: &[],
                     },
                     width,
@@ -2339,6 +2365,7 @@ fn render_search_results(
                         annotation: app.changed_annotation(&hit.path),
                         name: &hit.path,
                         ignored: false,
+                        reviewed: false,
                         emphasis: &hit.spans,
                     },
                     width,

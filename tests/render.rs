@@ -75,6 +75,66 @@ fn fg_in_nav(buffer: &Buffer, needle: &str) -> Option<ratatui::style::Color> {
     None
 }
 
+/// The fg colour of the first cell of `needle` where it appears as a contiguous run on a row
+/// within the left-hand read pane (the diff/file content), scanning top to bottom. `None`
+/// when the text isn't present there.
+fn fg_in_read(buffer: &Buffer, needle: &str) -> Option<ratatui::style::Color> {
+    let area = buffer.area;
+    let x1 = area.width * 7 / 10;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..x1 {
+            row.push_str(buffer.cell((x, y)).map_or(" ", |c| c.symbol()));
+        }
+        if let Some(byte) = row.find(needle) {
+            let x = row[..byte].chars().count() as u16;
+            return buffer.cell((x, y)).map(|c| c.fg);
+        }
+    }
+    None
+}
+
+#[test]
+fn embedded_sql_in_a_csharp_file_renders_coloured_in_the_file_view() {
+    use herdr_reviewr::highlight::Highlighter;
+    use herdr_reviewr::theme;
+
+    // The pling-backend pattern: a raw string holding a query, no marker.
+    let src = "class R\n{\n    const string sql =\n        \"\"\"\n            SELECT CaseId\n            FROM DsaCaseWriteModel\n            WHERE CaseId = @CaseId\n        \"\"\";\n}\n";
+    let r = Repo::init();
+    r.write("Repo.cs", src);
+    r.commit_all("init");
+
+    let mut app = app_on(&r);
+    enter_tab(&mut app, Tab::AllFiles); // the file view shows whole-file content
+    app.select_file(app_first_file_row(&app)).unwrap();
+    let buf = render_buffer(&app);
+
+    // The SQL grammar's keyword colour, taken from a standalone highlight so the assertion
+    // tracks the real theme rather than a hard-coded hue.
+    let sql_kw = {
+        let h = Highlighter::new(theme::resolve(Some("catppuccin")).syntax);
+        let line = &h.highlight("SELECT 1\n", Some("sql"))[0];
+        let c = line.iter().find(|s| s.text == "SELECT").unwrap().color;
+        ratatui::style::Color::Rgb(c.0, c.1, c.2)
+    };
+
+    assert_eq!(
+        fg_in_read(&buf, "SELECT"),
+        Some(sql_kw),
+        "SELECT inside the C# raw string is painted with the SQL grammar colour"
+    );
+}
+
+/// The visible-row index of the first file row in the navigator, for opening it in the read
+/// pane.
+fn app_first_file_row(app: &App) -> usize {
+    app.file_rows
+        .iter()
+        .position(|r| r.file_index().is_some())
+        .expect("the tree holds at least one file row")
+}
+
 /// The right `100-pct`% of every frame row, for pane-scoped assertions — one home for
 /// the column math, so the two panes' cut points can't drift apart silently.
 fn right_column(out: &str, pct: usize) -> String {
@@ -237,6 +297,35 @@ fn a_folder_holding_a_change_takes_the_aggregate_change_colour() {
     // The folder itself carries no change, but it holds an added file, so its name reads
     // green — the change propagates up to the collapsed parent (specs/file-list.md).
     assert_eq!(fg_in_nav(&buf, "pkg"), Some(GREEN), "a folder with an added file reads green");
+}
+
+#[test]
+fn a_reviewed_file_greys_out_in_the_navigator() {
+    let r = Repo::init();
+    r.write("keep.rs", "one\n");
+    r.write("other.rs", "one\n");
+    r.commit_all("init");
+    r.write("keep.rs", "one\ntwo\n"); // modified → peach until reviewed
+    r.write("other.rs", "one\ntwo\n"); // modified → stays peach
+    let mut app = app_on(&r);
+
+    // The cursor rests on the first file (keep.rs); mark it reviewed, then move the selection
+    // off it so the row shows its true (unselected) colour rather than the lifted fill.
+    app.toggle_reviewed();
+    app.select_file(1).unwrap();
+    let grey = app.palette().overlay0;
+    let buf = render_buffer(&app);
+
+    assert_eq!(
+        fg_in_nav(&buf, "keep.rs"),
+        Some(grey),
+        "a reviewed file greys out instead of its change colour"
+    );
+    assert_eq!(
+        fg_in_nav(&buf, "other.rs"),
+        Some(PEACH),
+        "an unreviewed changed file keeps its change colour"
+    );
 }
 
 /// The fg colour of the leftmost `▌` change bar on the first read-pane row containing `needle`.

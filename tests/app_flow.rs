@@ -3274,8 +3274,8 @@ fn fixed_keys_survive_rebinding() {
     let r = edited_repo();
     let mut app = app_on(&r);
     let keymap = Keymap::resolve(&[
-        (Action::Down, vec![Key::plain('x')]),
-        (Action::Up, vec![Key::plain('X')]),
+        (Action::Down, vec![Key::plain('g')]),
+        (Action::Up, vec![Key::plain('G')]),
     ])
     .unwrap();
     app.focus = Focus::Diff;
@@ -3587,12 +3587,12 @@ fn the_comments_list_acts_through_the_same_bindings() {
     let r = edited_repo();
     let mut app = app_on(&r);
     comment_on(&mut app, '+', "note");
-    let keymap = Keymap::resolve(&[(Action::Delete, vec![Key::plain('x')])]).unwrap();
+    let keymap = Keymap::resolve(&[(Action::Delete, vec![Key::plain('g')])]).unwrap();
 
     app.open_list();
     press(&mut app, &keymap, KeyCode::Char('d'));
     assert_eq!(app.store.len(), 1, "the replaced default is inert in the list too");
-    press(&mut app, &keymap, KeyCode::Char('x'));
+    press(&mut app, &keymap, KeyCode::Char('g'));
     assert!(app.store.is_empty(), "the rebound `delete` acts on the highlighted row");
 }
 
