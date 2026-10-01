@@ -21,3 +21,6 @@ Cargo.lock.bak
 # herdr-prs runtime state: the picker (pick-repos.sh) rewrites this with your
 # personal repo list and local clone paths. Machine-specific, not shared.
 /herdr-prs/repos.conf
+
+# herdr-prod runtime state: the picker rewrites this with your watch list.
+/herdr-prod/repos.conf
