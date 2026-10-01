@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # herdr-prs test suite. Pure-logic tests (render, new) plus dry-run tests of the
 # side-effecting scripts (openpr, action) via fake `gh`/`herdr`/`git` on PATH.
-#   Usage: bash test/test.sh [render|new|openpr|action|lint|all]
+#   Usage: bash test/test.sh [render|new|openpr|pickaction|action|lint|all]
 set -uo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
@@ -22,7 +22,9 @@ test_render() {
   echo "render:"
   # shellcheck source=../lib.sh
   source "$HERE/lib.sh"
-  local out; out="$(prs_render_rows < "$FIX/prs.json")"
+  # Detail line off here: these assertions are about the PR row itself, so keep
+  # one line per PR. Records are NUL-separated (--read0), so translate to lines.
+  local out; out="$(PRS_DETAIL=0 prs_render_rows < "$FIX/prs.json" | tr '\0' '\n')"
   local n; n="$(wc -l <<<"$out" | tr -d ' ')"
   [[ "$n" == 3 ]] && pass "three rows" || fail "expected 3 rows, got $n"
 
@@ -49,6 +51,10 @@ test_render() {
   have "$d1" $'\033[1;32m' && pass "CI ✓ is green" || fail "row1 CI not green: $(cat -v <<<"$d1")"
   have "$d2" $'\033[1;31m' && pass "CI ✗ is red"   || fail "row2 CI not red: $(cat -v <<<"$d2")"
   have "$d3" $'\033[1;33m' && pass "CI ● is yellow" || fail "row3 CI not yellow: $(cat -v <<<"$d3")"
+  # Review label is colored by decision: green approved, dull yellow needed, red changes.
+  have "$d1" $'\033[32m[approved]'      && pass "approved label is green"        || fail "approved not green: $(cat -v <<<"$d1")"
+  have "$d2" $'\033[33m[review-needed]' && pass "review-needed label is yellow"  || fail "needed not yellow: $(cat -v <<<"$d2")"
+  have "$d3" $'\033[31m[changes]'       && pass "changes label is red"           || fail "changes not red: $(cat -v <<<"$d3")"
 }
 
 # --- pure: NEW marking -------------------------------------------------------
@@ -58,22 +64,22 @@ test_new() {
   source "$HERE/lib.sh"
   local seen; seen="$(mktemp)"
   printf '%s\n' "vippsas/pling-backend#42" "vippsas/ongoing-due-diligence#1317" > "$seen"
-  local out; out="$(prs_render_rows "$seen" < "$FIX/prs.json")"
+  local out; out="$(PRS_DETAIL=0 prs_render_rows "$seen" < "$FIX/prs.json" | tr '\0' '\n')"
   rm -f "$seen"
 
-  # #7 (terms) is not in the seen set → starred; the other two are not.
-  local s1 s2 s3
-  s1="$(sed -n 1p <<<"$out" | cut -f5 | cut -c1)"
-  s2="$(sed -n 2p <<<"$out" | cut -f5 | cut -c1)"
-  s3="$(sed -n 3p <<<"$out" | cut -f5 | cut -c1)"
-  [[ "$s1" != "★" ]] && pass "seen #42 not starred"   || fail "row1 unexpectedly starred"
-  [[ "$s2" != "★" ]] && pass "seen #1317 not starred" || fail "row2 unexpectedly starred"
-  [[ "$s3" == "★" ]] && pass "unseen #7 starred"      || fail "row3 not starred: '$(sed -n 3p <<<"$out" | cut -f5)'"
+  # #7 (terms) is not in the seen set → marked new (▎ bar); the other two are not.
+  local r1 r2 r3
+  r1="$(sed -n 1p <<<"$out" | cut -f5)"
+  r2="$(sed -n 2p <<<"$out" | cut -f5)"
+  r3="$(sed -n 3p <<<"$out" | cut -f5)"
+  { have "$r1" "▎" && fail "row1 unexpectedly marked new"; }   || pass "seen #42 not marked new"
+  { have "$r2" "▎" && fail "row2 unexpectedly marked new"; }   || pass "seen #1317 not marked new"
+  have "$r3" "▎" && pass "unseen #7 marked new" || fail "row3 not marked new: '$r3'"
 
   # With no seen file, everything is NEW.
-  local all; all="$(prs_render_rows < "$FIX/prs.json")"
-  local stars; stars="$(cut -f5 <<<"$all" | cut -c1 | grep -c '★' || true)"
-  [[ "$stars" == 3 ]] && pass "no baseline ⇒ all new" || fail "expected 3 stars, got $stars"
+  local all; all="$(PRS_DETAIL=0 prs_render_rows < "$FIX/prs.json" | tr '\0' '\n')"
+  local bars; bars="$(grep -c '▎' <<<"$all" || true)"
+  [[ "$bars" == 3 ]] && pass "no baseline ⇒ all new" || fail "expected 3 bars, got $bars"
 
   # Fast mode: PRs missing reviewDecision/statusCheckRollup must render, not crash.
   local lean; lean='[{"number":9,"title":"lean","author":{"login":"z"},"createdAt":"2026-08-01T00:00:00Z","isDraft":false,"repo":"vippsas/lean","localpath":"/tmp/l"}]'
@@ -84,6 +90,51 @@ test_new() {
   else
     fail "fast-mode render failed (rc=$rc): $lout"
   fi
+}
+
+# --- pure: detail info line --------------------------------------------------
+test_detail() {
+  echo "detail:"
+  # shellcheck source=../lib.sh
+  source "$HERE/lib.sh"
+  # Detail ON: records are NUL-separated and each PR spans two lines. Read the
+  # NUL stream straight into an array — a command substitution would strip the
+  # NULs — using `read -d ''` (portable back to bash 3.2, no readarray).
+  local -a recs=() rec
+  while IFS= read -r -d '' rec; do recs+=("$rec"); done \
+    < <(PRS_DETAIL=1 prs_render_rows < "$FIX/prs.json")
+  [[ "${#recs[@]}" == 3 ]] && pass "one record per PR (info line stays in-record)" \
+    || fail "expected 3 records, got ${#recs[@]}"
+
+  # Oldest first is still #42; its record must carry a second (info) line.
+  local r1="${recs[0]}" info1 nl1
+  nl1="$(printf '%s' "$r1" | wc -l | tr -d ' ')"
+  info1="$(cut -f5 <<<"$r1" | sed -n 2p)"
+  [[ "$nl1" -ge 1 ]] && pass "PR row has an info line beneath it" || fail "no info line in record"
+  have "$info1" $'\033[2m' && pass "info line is dim" || fail "info not dim: $(cat -v <<<"$info1")"
+  local plain1; plain1="$(printf '%s' "$info1" | sed 's/\x1b\[[0-9;]*m//g')"
+  have "$plain1" "feat/oldest" && pass "shows source branch" || fail "no source branch: $plain1"
+  { have "$plain1" "→ main" && fail "redundant → main should be dropped"; } || pass "drops → main (default base)"
+  # A non-default base IS shown: #7 targets develop.
+  local plain3; plain3="$(cut -f5 <<<"${recs[2]}" | sed -n 2p | sed 's/\x1b\[[0-9;]*m//g')"
+  have "$plain3" "fix/pending → develop" && pass "shows non-default base branch" || fail "no base for #7: $plain3"
+  have "$plain1" "ago" && pass "shows last-activity age" || fail "no age: $plain1"
+  have "$plain1" "+120/-34" && pass "shows diff size" || fail "no diff size: $plain1"
+  have "$info1" $'\033[32m+120' && pass "additions are green" || fail "adds not green: $(cat -v <<<"$info1")"
+  have "$info1" $'\033[31m-34' && pass "deletions are red" || fail "dels not red: $(cat -v <<<"$info1")"
+
+  # Cheapest fetch: no labels, no comment thread pulled → those never render.
+  { have "$plain1" "backend" && fail "labels should not be fetched/rendered"; } || pass "no labels (cheap fetch)"
+  local plain2; plain2="$(cut -f5 <<<"${recs[1]}" | sed -n 2p | sed 's/\x1b\[[0-9;]*m//g')"
+  { have "$plain2" "💬" && fail "comment thread should not be fetched/rendered"; } || pass "no comment thread (cheap fetch)"
+
+  # Detail OFF: single-line records, no embedded newline, no info text.
+  local -a orecs=()
+  while IFS= read -r -d '' rec; do orecs+=("$rec"); done \
+    < <(PRS_DETAIL=0 prs_render_rows < "$FIX/prs.json")
+  local nlo; nlo="$(printf '%s' "${orecs[0]}" | wc -l | tr -d ' ')"
+  [[ "$nlo" == 0 ]] && pass "PRS_DETAIL=0 keeps rows single-line" \
+    || fail "detail-off row still multiline: $(cat -v <<<"${orecs[0]}")"
 }
 
 # --- fetch: prs_fetch_all combines all repos (guards parallel fetch) ---------
@@ -142,7 +193,7 @@ test_lazy() {
     && pass "uncached PR marked ci_loading" || fail "row3 not marked ci_loading"
 
   # Rendered glyphs: green ✓, red ✗, dim placeholder for the loading one.
-  out="$(printf '%s' "$merged" | prs_render_rows)"
+  out="$(printf '%s' "$merged" | PRS_DETAIL=0 prs_render_rows | tr '\0' '\n')"
   local d1 d2 d3
   d1="$(sed -n 1p <<<"$out" | cut -f5)"; d2="$(sed -n 2p <<<"$out" | cut -f5)"; d3="$(sed -n 3p <<<"$out" | cut -f5)"
   have "$d1" $'\033[1;32m' && pass "cached green glyph renders" || fail "row1 not green: $(cat -v <<<"$d1")"
@@ -238,6 +289,16 @@ test_openpr() {
   have "$out" "herdr pane rename pane-1 agent" && pass "left pane is agent" || fail "no agent rename"
   have "$out" "plugin pane open --plugin persiyanov.reviewr" && pass "reviewer pane on the right" || fail "no reviewer pane"
   have "$out" "herdr pane run pane-1 command copilot" && pass "agent command launched" || fail "no agent run"
+
+  # With a 4th arg (a prompt), the agent is launched to auto-run it: the run
+  # line gains the prompt flag (-i) and the instruction.
+  : > "$log"
+  PATH="$bin:$PATH" HERDR_BIN_PATH="$bin/herdr" \
+    bash "$HERE/open-pr.sh" vippsas/pling-backend 42 "$clone" "Fix PR now" >/dev/null 2>&1
+  local pout aln; pout="$(cat "$log")"
+  aln="$(grep 'pane run pane-1 command copilot' <<<"$pout")"
+  have "$aln" "-i" && have "$aln" "Fix" && pass "prompt launches agent with -i" \
+    || fail "no -i prompt launch: $aln"
   rm -rf "$tmp"
 }
 
@@ -270,6 +331,49 @@ test_openpr_dirty() {
   grep -q '^mine$' "$clone/tracked.txt" && pass "tracked edit restored" || fail "tracked edit lost"
   [[ -f "$clone/new.txt" ]] && pass "untracked file restored" || fail "untracked file lost"
   [[ -z "$(git -C "$clone" stash list)" ]] && pass "no leftover stash" || fail "stash left behind"
+  rm -rf "$tmp"
+}
+
+# --- dry-run: pick-action.sh (Enter menu) ------------------------------------
+test_pickaction() {
+  echo "pick-action:"
+  local tmp bin log clone; tmp="$(mktemp -d)"; bin="$tmp/bin"; log="$tmp/log"
+  make_fakes "$bin" "$log"
+  # A fake fzf that echoes the chosen input line (1-based $FAKE_FZF_LINE).
+  cat > "$bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+sed -n "${FAKE_FZF_LINE:-1}p"
+EOF
+  chmod +x "$bin/fzf"
+  clone="$tmp/pling-backend"; mkdir -p "$clone"
+  ( cd "$clone" && git init -q && git config user.email t@t && git config user.name t \
+      && git commit -q --allow-empty -m init ) >/dev/null 2>&1
+
+  # Line 2 = default action index 1 (vipps_restore "Fix failing PR"): the agent
+  # launches with -i and the {repo}/{num}-expanded instruction.
+  PATH="$bin:$PATH" HERDR_BIN_PATH="$bin/herdr" FAKE_FZF_LINE=2 \
+    bash "$HERE/pick-action.sh" vippsas/pling-backend 42 "$clone" >/dev/null 2>&1
+  local out aln; out="$(cat "$log")"
+  aln="$(grep 'pane run pane-1 command copilot' <<<"$out")"
+  have "$aln" "-i" && pass "chosen action launches agent with -i" || fail "no -i: $aln"
+  have "$aln" "vipps_restore" && pass "prompt carries the chosen skill" || fail "no skill in: $aln"
+  have "$aln" "vippsas/pling-backend" && pass "{repo} expanded" || fail "repo not expanded: $aln"
+
+  # Line 1 = the clean agent (empty prompt): bare launch, no -i.
+  : > "$log"
+  PATH="$bin:$PATH" HERDR_BIN_PATH="$bin/herdr" FAKE_FZF_LINE=1 \
+    bash "$HERE/pick-action.sh" vippsas/pling-backend 42 "$clone" >/dev/null 2>&1
+  out="$(cat "$log")"; aln="$(grep 'pane run pane-1 command copilot' <<<"$out")"
+  { have "$aln" "copilot" && ! have "$aln" "-i"; } && pass "clean agent has no prompt" \
+    || fail "clean agent unexpectedly prompted: $aln"
+
+  # Empty pick (Esc) = a fzf line past the end → nothing runs, dashboard resumes.
+  : > "$log"
+  PATH="$bin:$PATH" HERDR_BIN_PATH="$bin/herdr" FAKE_FZF_LINE=99 \
+    bash "$HERE/pick-action.sh" vippsas/pling-backend 42 "$clone" >/dev/null 2>&1
+  out="$(cat "$log")"
+  ! have "$out" "workspace create" && pass "empty pick opens nothing" \
+    || fail "empty pick still opened a workspace"
   rm -rf "$tmp"
 }
 
@@ -362,13 +466,15 @@ test_lint() {
 case "${1:-all}" in
   render) test_render ;;
   new)    test_new ;;
+  detail) test_detail ;;
   watch)  test_watch ;;
   openpr) test_openpr; test_openpr_dirty ;;
+  pickaction) test_pickaction ;;
   action) test_action ;;
   fetch)  test_fetch ;;
   lazy)   test_lazy ;;
   lint)   test_lint ;;
-  all)    test_render; test_new; test_fetch; test_lazy; test_watch; test_openpr; test_openpr_dirty; test_action; test_lint ;;
+  all)    test_render; test_new; test_detail; test_fetch; test_lazy; test_watch; test_openpr; test_openpr_dirty; test_pickaction; test_action; test_lint ;;
   *) echo "unknown: $1" >&2; exit 2 ;;
 esac
 

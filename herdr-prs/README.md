@@ -11,9 +11,9 @@ on a PR and it checks the branch out in your local clone and opens the usual
 ┌──────────────────────── workspace: PRs ─────────────────────────┐
 │ PR ▸                                                            │
 │   ongoing-due-diligence  #1307  Store onfido timeline…  ✓  11d  │
-│ ★ pling-backend          #74    Emit DigitalServiceAct… ✓  1d   │
-│ ★ terms-and-conditions   #7     Newest but pending…     •  1h   │
-│  ★ = new since last visit · enter: work on it · ctrl-r: refresh │
+│ ▎ pling-backend          #74    Emit DigitalServiceAct… ✓  1d   │
+│ ▎ terms-and-conditions   #7     Newest but pending…     •  1h   │
+│  ▎ = new since last visit · enter: work on it · ctrl-r: refresh │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -21,11 +21,15 @@ on a PR and it checks the branch out in your local clone and opens the usual
 
 - **The action** `herdr-prs.open` (bind it to a key, e.g. `prefix+r`) focuses the
   `PRs` workspace, creating it the first time and starting the live list in its
-  pane. Re-opening re-baselines the ★ "new" markers, so a visit clears them and
+  pane. Re-opening re-baselines the ▎ "new" markers, so a visit clears them and
   only genuinely new PRs light up.
 - **The list** (`dashboard.sh`) is `fzf` fed by `gen.sh`, which fetches open,
   non-draft PRs for every repo in `repos.conf` via `gh`, sorts them oldest-first,
-  and renders `repo · #num · title · @author · [review] · CI · age`. The list
+  and renders `repo · #num · title · @author · [review] · CI · age`. Under each
+  PR a **dim info line** (`PRS_DETAIL`, on) adds context you don't act on —
+  `branch · +adds/-dels · updated` (additions green, deletions red, and `→ base`
+  shown only when a PR doesn't target `main`); it's information only, so `j`/`k`
+  step over it. The list
   paints at once; the **CI pipeline glyph** is filled in *lazily* — a dim
   placeholder marks each PR whose status isn't known yet while `enrich.sh` fetches
   it in the background, then the glyph settles to a colour on the next refresh:
@@ -40,10 +44,14 @@ on a PR and it checks the branch out in your local clone and opens the usual
   comment surfaces on its own, without a manual `ctrl-r`. The first cycle seeds
   its watermark silently so your existing unread backlog isn't announced. Only
   PRs you're subscribed/watching on GitHub generate notifications.
-- **Enter** runs `open-pr.sh`: `gh pr checkout <n>` in the repo's local clone,
-  then a new workspace labelled `repo #num` with an **agent** pane (left) and a
+- **Enter** pops a small menu (`pick-action.sh`) of ways to start the agent —
+  the first is a **clean agent**, the rest prefill an instruction the agent
+  auto-runs (e.g. *Fix failing PR* → `vipps_restore`). It then runs
+  `open-pr.sh`: `gh pr checkout <n>` in the repo's local clone, then a new
+  workspace labelled `repo #num` with an **agent** pane (left) and a
   **reviewer** pane (right, the `persiyanov.reviewr` plugin by default). Because
-  the PR branch is checked out, the reviewer's **PR tab** lands right on it.
+  the PR branch is checked out, the reviewer's **PR tab** lands right on it. The
+  menu is configurable — see `PRS_ACTIONS`.
 
 The dashboard never writes to your repos beyond `gh pr checkout`. If the target
 clone has uncommitted work, it is **auto-stashed** (including untracked files)
@@ -106,6 +114,7 @@ that copy:
 | `INTERVAL`  | Auto-refresh cadence in seconds (default `30`). Also the CI re-fetch floor: a pipeline glyph can only flip colour once the CI cache is this old. Lower = snappier but more `gh` load (`statusCheckRollup` cost scales with your open-PR count). The watcher's own `/notifications` poll is separately clamped to ≥ 60s regardless. |
 | `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background (a dim `·` placeholder until it lands). `0` drops it (always `·`). |
 | `PRS_REVIEW`| `1` (default) shows the review-decision label. `0` drops it (rows show `—`). Unlike CI this is fetched inline, so it can slow the first paint on busy repos. |
+| `PRS_DETAIL`| `1` (default) shows the dim, non-selectable info line under each PR (`branch · +adds/-dels · updated`; adds green, dels red, `→ base` only when not `main`). `j`/`k` skip it — it's information only. Built from cheap scalar fields, so it adds **no** extra GraphQL cost over the base fetch. `0` drops the line. |
 | `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |
 | `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |
 | `PRS_WATCH` | `1` (default) runs a background watcher that polls GitHub `/notifications` and, on a change, toasts new PR comments/reviews and auto-refreshes the CI glyphs — no manual `ctrl-r`. `0` disables it entirely (no poller, no toasts, no `--listen` socket). |
@@ -114,6 +123,8 @@ that copy:
 | `PICK_ORG` / `PICK_TEAM` | The `ctrl-e` picker's pool: a team's repos, or (empty team) every repo you can see in the org. |
 | `WS_LABEL`  | Label of the dashboard workspace (default `PRs`).            |
 | `AGENT_CMD` | Command run in the left **agent** pane of the work workspace. |
+| `AGENT_PROMPT_FLAG` | Flag prepended to a prefilled instruction (default `-i`, copilot's "start interactive & auto-run this prompt"). |
+| `PRS_ACTIONS` | The Enter menu: a bash array of `Label<TAB>prompt` entries. First is the clean agent (empty prompt); the rest auto-run their prompt. `{repo}`/`{num}` expand to the PR's owner/repo and number. |
 | `REVIEWER`  | The right pane: `plugin:<id>:<entrypoint>`, `cmd:<line>`, or `shell`. |
 
 ## Choosing which repos to monitor
@@ -140,7 +151,7 @@ Local clone paths are resolved automatically. You can also run it directly with
 | `g` / `G`     | jump to top / bottom                               |
 | `ctrl-d`/`ctrl-u` | half-page down / up                            |
 | type text     | filter the list                                    |
-| `enter`       | check out the PR and open its work workspace       |
+| `enter`       | check out the PR, then pick how to start the agent |
 | `ctrl-e`      | pick which repos to monitor                        |
 | `ctrl-r`      | refresh now                                        |
 | `ctrl-o`      | open the PR on GitHub                              |
@@ -153,5 +164,5 @@ bash test/test.sh          # all
 bash test/test.sh render   # just the row renderer
 ```
 
-Pure-logic tests cover the renderer and the ★ marking; the side-effecting scripts
+Pure-logic tests cover the renderer and the ▎ marking; the side-effecting scripts
 (`open-pr.sh`, `action-open.sh`) are dry-run against fake `gh`/`herdr`/`git`.
