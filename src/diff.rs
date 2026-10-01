@@ -26,10 +26,28 @@ pub struct Span {
 /// for comments; a `Fold` is a collapsed run of context lines it owns.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Row {
-    Context { old_no: u32, new_no: u32, spans: Vec<Span> },
+    Context { old_no: u32, new_no: u32, spans: Vec<Span>, mark: LineMark },
     Deletion { old_no: u32, spans: Vec<Span>, emphasis: Vec<CharRange> },
     Insertion { new_no: u32, spans: Vec<Span>, emphasis: Vec<CharRange> },
     Fold { lines: Vec<Row> },
+}
+
+/// The File view's per-line change marker, painted as the gutter bar beside a line number so
+/// a whole-file browse shows which lines changed vs the base (specs/diff-view.md). Always
+/// `Unchanged` in the Diff view, which carries its changes as `Deletion`/`Insertion` rows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LineMark {
+    /// The line is unchanged vs the base.
+    #[default]
+    Unchanged,
+    /// The line is new — it has no counterpart in the base.
+    Added,
+    /// The line is an edited version of a base line.
+    Modified,
+    /// One or more base lines were deleted immediately above this (otherwise unchanged) line.
+    DeletedAbove,
+    /// One or more base lines were deleted at the end of the file, below this last line.
+    DeletedBelow,
 }
 
 /// A `[start, end)` run of char indices within a line, for word-level emphasis.
@@ -47,6 +65,14 @@ impl Row {
         match self {
             Row::Context { new_no, .. } | Row::Insertion { new_no, .. } => Some(*new_no),
             Row::Deletion { .. } | Row::Fold { .. } => None,
+        }
+    }
+
+    /// The File-view change mark for this line; `Unchanged` for every non-context row.
+    pub fn mark(&self) -> LineMark {
+        match self {
+            Row::Context { mark, .. } => *mark,
+            _ => LineMark::Unchanged,
         }
     }
 
@@ -209,6 +235,7 @@ impl FileDiff {
                         old_no: oi as u32 + 1,
                         new_no: ni as u32 + 1,
                         spans: line(&new_spans, ni),
+                        mark: LineMark::Unchanged,
                     });
                 }
                 ChangeTag::Delete => {
@@ -240,9 +267,12 @@ impl FileDiff {
     }
 
     /// Build the File view: the whole current `content` as `Context` rows, syntax-highlighted,
-    /// with no folds, change rows, or emphasis. Powers the `All files` tab (specs/diff-view.md).
-    /// Degrades to a `binary` or `too_large` notice on the same budgets as [`build`](Self::build).
-    fn build_file(path: String, content: &str, hl: &Highlighter) -> Self {
+    /// with no folds, change rows, or emphasis. `old` is the base content when the file changed
+    /// in the active scope, so each line carries a [`LineMark`] the gutter paints beside its
+    /// number (added/modified/deleted-boundary); `None` leaves every line `Unchanged`. Powers
+    /// the `All files` tab (specs/diff-view.md). Degrades to a `binary` or `too_large` notice on
+    /// the same budgets as [`build`](Self::build).
+    fn build_file(path: String, old: Option<&str>, content: &str, hl: &Highlighter) -> Self {
         let notice = |state| Self {
             path: path.clone(),
             previous_path: None,
@@ -257,6 +287,10 @@ impl FileDiff {
             return notice(FileState::TooLarge);
         }
         let spans = hl.highlight(content, language_of(&path).as_deref());
+        let marks = old
+            .filter(|o| *o != content)
+            .map(|o| compute_file_marks(o, content))
+            .unwrap_or_default();
         let rows = content
             .lines()
             .enumerate()
@@ -266,6 +300,7 @@ impl FileDiff {
                     old_no: no,
                     new_no: no,
                     spans: spans.get(i).cloned().unwrap_or_default(),
+                    mark: marks.get(i).copied().unwrap_or_default(),
                 }
             })
             .collect();
@@ -283,6 +318,49 @@ impl FileDiff {
             rows: Vec::new(),
         }
     }
+}
+
+/// Classify every current (new-side) line against `old`, for the File-view change gutter.
+/// `similar` reports a run of deletions before the insertions that replace them, so an
+/// insertion that has a pending deletion is an *edit* (`Modified`); one without is a fresh
+/// `Added` line. Deletions left unmatched are pure removals: they mark the next unchanged
+/// line with `DeletedAbove`, or the last line with `DeletedBelow` at end-of-file — a hint
+/// that content vanished at that seam, since a removed line has no row of its own here.
+fn compute_file_marks(old: &str, new: &str) -> Vec<LineMark> {
+    let mut marks = vec![LineMark::Unchanged; new.lines().count()];
+    let mut pending_del = 0usize;
+    let mut last_new: Option<usize> = None;
+    for change in TextDiff::from_lines(old, new).iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Delete => pending_del += 1,
+            ChangeTag::Insert => {
+                let ni = change.new_index().unwrap();
+                marks[ni] = if pending_del > 0 {
+                    pending_del -= 1;
+                    LineMark::Modified
+                } else {
+                    LineMark::Added
+                };
+                last_new = Some(ni);
+            }
+            ChangeTag::Equal => {
+                let ni = change.new_index().unwrap();
+                if pending_del > 0 {
+                    marks[ni] = LineMark::DeletedAbove;
+                    pending_del = 0;
+                }
+                last_new = Some(ni);
+            }
+        }
+    }
+    // Deletions with no following line are a removal at the end of the file.
+    if pending_del > 0
+        && let Some(i) = last_new
+        && marks[i] == LineMark::Unchanged
+    {
+        marks[i] = LineMark::DeletedBelow;
+    }
+    marks
 }
 
 /// Fill word-level `emphasis` on the related deletion/insertion lines of each change block
@@ -508,12 +586,22 @@ impl DiffCache {
         self.get_or_build(path.clone(), key, || FileDiff::build(path, previous_path, old, new, hl))
     }
 
-    /// Return the cached File view when `content` is unchanged for `path`, else build it.
-    /// File-view entries are namespaced under a `file:` key so a path's File view and Diff
-    /// view coexist in the cache instead of evicting each other on a tab switch.
-    pub fn get_file(&mut self, path: String, content: &str, hl: &Highlighter) -> FileDiff {
-        let key = content_hash(None, content, content);
-        self.get_or_build(format!("file:{path}"), key, || FileDiff::build_file(path, content, hl))
+    /// Return the cached File view when `old`/`content` are unchanged for `path`, else build
+    /// it. `old` is the base content when the file changed (drives the line-change gutter),
+    /// `None` for an unchanged browse. File-view entries are namespaced under a `file:` key so
+    /// a path's File view and Diff view coexist in the cache instead of evicting each other on
+    /// a tab switch.
+    pub fn get_file(
+        &mut self,
+        path: String,
+        old: Option<&str>,
+        content: &str,
+        hl: &Highlighter,
+    ) -> FileDiff {
+        let key = content_hash(None, old.unwrap_or(content), content);
+        self.get_or_build(format!("file:{path}"), key, || {
+            FileDiff::build_file(path, old, content, hl)
+        })
     }
 
     /// Shared cache body: return the entry under `cache_key` when its stored hash still equals
@@ -566,7 +654,7 @@ mod tests {
         for i in 0..40 {
             writeln!(content, "line {i}").unwrap();
         }
-        let d = FileDiff::build_file("a.rs".into(), &content, &hl);
+        let d = FileDiff::build_file("a.rs".into(), None, &content, &hl);
         assert_eq!(d.view, View::File);
         assert_eq!(d.state, FileState::Normal);
         assert_eq!(d.rows.len(), 40);
@@ -580,7 +668,7 @@ mod tests {
     #[test]
     fn file_view_degrades_on_binary() {
         let hl = Highlighter::new(mocha());
-        let d = FileDiff::build_file("blob.bin".into(), "a\0b", &hl);
+        let d = FileDiff::build_file("blob.bin".into(), None, "a\0b", &hl);
         assert_eq!(d.state, FileState::Binary);
         assert_eq!(d.view, View::File);
         assert!(d.rows.is_empty());
@@ -589,6 +677,33 @@ mod tests {
     fn build(old: &str, new: &str) -> FileDiff {
         let hl = Highlighter::new(mocha());
         FileDiff::build("a.rs".into(), None, old, new, &hl)
+    }
+
+    #[test]
+    fn file_marks_classify_added_modified_and_deleted_lines() {
+        use super::{LineMark, compute_file_marks};
+        // A fresh line with no base counterpart is Added.
+        assert_eq!(
+            compute_file_marks("a\nb\n", "a\nnew\nb\n"),
+            [LineMark::Unchanged, LineMark::Added, LineMark::Unchanged]
+        );
+        // An edited line (a delete immediately replaced by an insert) is Modified.
+        assert_eq!(
+            compute_file_marks("a\nold\nb\n", "a\nnew\nb\n"),
+            [LineMark::Unchanged, LineMark::Modified, LineMark::Unchanged]
+        );
+        // A pure deletion marks the unchanged line that now follows the seam.
+        assert_eq!(
+            compute_file_marks("a\ngone\nb\n", "a\nb\n"),
+            [LineMark::Unchanged, LineMark::DeletedAbove]
+        );
+        // A deletion at end-of-file marks the last surviving line below it.
+        assert_eq!(
+            compute_file_marks("a\nb\ntail\n", "a\nb\n"),
+            [LineMark::Unchanged, LineMark::DeletedBelow]
+        );
+        // An unchanged file carries no marks.
+        assert!(compute_file_marks("a\nb\n", "a\nb\n").iter().all(|m| *m == LineMark::Unchanged));
     }
 
     #[test]

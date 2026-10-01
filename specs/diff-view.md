@@ -62,6 +62,7 @@ Content rows are selectable for comments. A `fold` is not.
 - Changes group into hunks with a context margin of 3 unchanged lines.
 - The whole file is highlighted, not each hunk. A multi-line string or comment colors correctly inside a hunk.
 - The language is detected from the path. An unknown path renders plain.
+- Inside a C# file, a raw string literal (`"""`) holding a query highlights its SQL statement keywords rather than reading as flat string text — an embedded-language injection. It fires when the body begins with a SQL statement keyword (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, `MERGE`, `SET`, `BEGIN`, `DECLARE`, and the other DDL/batch openers), or when a `lang=sql` / `language=sql` marker sits on or just above the opening delimiter. Only keywords are tinted, all in one accent — including the T-SQL batch words the grammar leaves untagged (`TRY`, `CATCH`, `TRANSACTION`, `THROW`, `GO`). Identifiers, numbers, operators, and `@name` parameters stay in the default text colour, for a calm single-accent look. Non-SQL strings and non-C# files are untouched. A contiguous SQL body shares one highlight pass, so a multi-line SQL construct carries across its lines.
 - The diff and highlighting are cached by content. A poll that finds the file unchanged recomputes nothing.
 
 ### Word emphasis
@@ -74,7 +75,8 @@ Content rows are selectable for comments. A `fold` is not.
 ### File view
 
 - The `FileDiff` is built from current content alone: every line a `context` row, no change rows, no emphasis, no folds.
-- The gutter shows the new-line number and a blank change bar.
+- The gutter shows the new-line number and a change bar for a file that changed in the active scope: green on an added line, peach on a modified line, and a red seam (a top rule above the following line, or a bottom rule under the last line) where lines were deleted. The bar marks the line only — there is no full-line tint, unlike Diff view. An unchanged file, and every unchanged line, shows a blank bar.
+- The change marks come from a line diff against the base content (the scope's old side). A file the scope reports unchanged is browsed without a base read.
 - Highlighting, wrapping, horizontal scroll, selection, and comments behave exactly as in Diff view.
 - A `binary` or `too_large` file degrades to a notice, worded `file too large` here and `file too large to diff` in Diff view.
 

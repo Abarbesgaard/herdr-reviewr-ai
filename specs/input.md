@@ -48,6 +48,7 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 | `delete`                                                 | delete the comment under the cursor         | `d`                                         | —                             |
 | `next-comment` / `prev-comment`                          | jump to next / previous comment             | `n` / `N`                                   | —                             |
 | `comments`                                               | list and manage all comments                | `l`                                         | —                             |
+| `toggle-reviewed`                                        | mark the file under the cursor reviewed      | `x`                                         | —                             |
 | `search`                                                 | open the search screen (`search.md`)        | `/`                                         | —                             |
 | `find`                                                   | open in-file find (`find-in-file.md`)       | `ctrl+f`                                    | —                             |
 | `keys`                                                   | toggle the footer's full shortcut list      | `?`                                         | —                             |

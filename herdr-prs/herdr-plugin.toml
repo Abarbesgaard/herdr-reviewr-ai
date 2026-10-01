@@ -1,0 +1,21 @@
+id = "herdr-prs"
+name = "PR Dashboard"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "A persistent workspace that lists open PRs across your chosen repos, oldest first. Pick one to check it out and open the agent + reviewer work workspace."
+platforms = ["linux", "macos"]
+
+# Action bound to a keybinding (e.g. prefix+r). It focuses the persistent
+# "PRs" dashboard workspace, creating it (and its live PR list) the first time.
+[[actions]]
+id = "open"
+title = "Open PR dashboard"
+command = ["bash", "action-open.sh"]
+
+# The live PR list. It runs in the dashboard workspace's pane and self-refreshes;
+# Enter on a row checks the PR out and opens the work workspace beside it.
+[[panes]]
+id = "dashboard"
+title = "PRs"
+placement = "popup"
+command = ["bash", "dashboard.sh"]

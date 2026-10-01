@@ -1,0 +1,42 @@
+[
+  {
+    "number": 1317,
+    "title": "Bump the dev-dependencies group with 19 updates",
+    "author": { "login": "app/dependabot" },
+    "createdAt": "2026-08-05T05:27:56Z",
+    "isDraft": false,
+    "reviewDecision": "REVIEW_REQUIRED",
+    "statusCheckRollup": [
+      { "conclusion": "FAILURE", "status": "COMPLETED" },
+      { "conclusion": "SUCCESS", "status": "COMPLETED" }
+    ],
+    "repo": "vippsas/ongoing-due-diligence",
+    "localpath": "/tmp/clones/ongoing-due-diligence"
+  },
+  {
+    "number": 42,
+    "title": "Add oldest feature",
+    "author": { "login": "alice" },
+    "createdAt": "2026-08-01T09:00:00Z",
+    "isDraft": false,
+    "reviewDecision": "APPROVED",
+    "statusCheckRollup": [
+      { "conclusion": "SUCCESS", "status": "COMPLETED" }
+    ],
+    "repo": "vippsas/pling-backend",
+    "localpath": "/tmp/clones/pling-backend"
+  },
+  {
+    "number": 7,
+    "title": "Newest but pending checks",
+    "author": { "login": "bob" },
+    "createdAt": "2026-08-06T06:00:00Z",
+    "isDraft": false,
+    "reviewDecision": "CHANGES_REQUESTED",
+    "statusCheckRollup": [
+      { "status": "IN_PROGRESS" }
+    ],
+    "repo": "vippsas/terms-and-conditions",
+    "localpath": "/tmp/clones/terms-and-conditions"
+  }
+]

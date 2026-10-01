@@ -1,0 +1,168 @@
+# herdr-prs
+
+A [herdr](https://herdr.dev) plugin: a **persistent PR dashboard**. One hotkey
+jumps you to a dedicated `PRs` workspace that lists every open pull request across
+the repos you choose — **oldest at the top** — and auto-refreshes. Press **Enter**
+on a PR and it checks the branch out in your local clone and opens the usual
+**agent + reviewer** work workspace, so you go from "what needs attention" to
+"working on it" without leaving the terminal.
+
+```
+┌──────────────────────── workspace: PRs ─────────────────────────┐
+│ PR ▸                                                            │
+│   ongoing-due-diligence  #1307  Store onfido timeline…  ✓  11d  │
+│ ▎ pling-backend          #74    Emit DigitalServiceAct… ✓  1d   │
+│ ▎ terms-and-conditions   #7     Newest but pending…     •  1h   │
+│  ▎ = new since last visit · enter: work on it · ctrl-r: refresh │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## How it works
+
+- **The action** `herdr-prs.open` (bind it to a key, e.g. `prefix+r`) focuses the
+  `PRs` workspace, creating it the first time and starting the live list in its
+  pane. Re-opening re-baselines the ▎ "new" markers, so a visit clears them and
+  only genuinely new PRs light up.
+- **The list** (`dashboard.sh`) is `fzf` fed by `gen.sh`, which fetches open,
+  non-draft PRs for every repo in `repos.conf` via `gh`, sorts them oldest-first,
+  and renders `repo · #num · title · @author · [review] · CI · age`. Under each
+  PR a **dim info line** (`PRS_DETAIL`, on) adds context you don't act on —
+  `branch · +adds/-dels · updated` (additions green, deletions red, and `→ base`
+  shown only when a PR doesn't target `main`); it's information only, so `j`/`k`
+  step over it. The list
+  paints at once; the **CI pipeline glyph** is filled in *lazily* — a dim
+  placeholder marks each PR whose status isn't known yet while `enrich.sh` fetches
+  it in the background, then the glyph settles to a colour on the next refresh:
+  green `✓` pass, red `✗` fail, yellow `●` pending, grey `·` no checks. It
+  auto-refreshes every `INTERVAL` seconds and on `ctrl-r`.
+- **Live watcher** (`watch.sh`, on by default — `PRS_WATCH`) — a detached
+  singleton poller that pings GitHub `/notifications` for your configured repos
+  (respecting GitHub's `X-Poll-Interval`, so ≥ 60s and read-only — it never marks
+  your inbox read). On a change it toasts new PR comments/reviews (`herdr
+  notification show`, reasons from `PRS_NOTIFY_REASONS`) and nudges the list to
+  repaint through `fzf`'s `--listen` socket, so a CI glyph flips colour or a fresh
+  comment surfaces on its own, without a manual `ctrl-r`. The first cycle seeds
+  its watermark silently so your existing unread backlog isn't announced. Only
+  PRs you're subscribed/watching on GitHub generate notifications.
+- **Enter** pops a small menu (`pick-action.sh`) of ways to start the agent —
+  the first is a **clean agent**, the rest prefill an instruction the agent
+  auto-runs (e.g. *Fix failing PR* → `vipps_restore`). It then runs
+  `open-pr.sh`: `gh pr checkout <n>` in the repo's local clone, then a new
+  workspace labelled `repo #num` with an **agent** pane (left) and a
+  **reviewer** pane (right, the `persiyanov.reviewr` plugin by default). Because
+  the PR branch is checked out, the reviewer's **PR tab** lands right on it. The
+  menu is configurable — see `PRS_ACTIONS`.
+
+The dashboard never writes to your repos beyond `gh pr checkout`. If the target
+clone has uncommitted work, it is **auto-stashed** (including untracked files)
+before the checkout and restored onto the PR branch afterwards; if that restore
+would conflict, the PR branch is left clean for review and your changes are kept
+safe in the stash (`git -C <clone> stash pop` to recover them).
+
+## Install (local / development)
+
+```sh
+# from the repo root, link this plugin directory
+herdr plugin link ./herdr-prs
+```
+
+Bind a key in `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+r"
+type = "plugin_action"
+description = "open PR dashboard"
+command = "herdr-prs.open"
+```
+
+Reload herdr: `herdr server reload-config`.
+
+**Requirements:** `herdr`, [`gh`](https://cli.github.com) (authenticated),
+[`fzf`](https://github.com/junegunn/fzf), `jq`, `git`.
+
+## Configure
+
+### Which repos — `repos.conf`
+
+One repo per line, `owner/repo` then an optional TAB and the local clone path.
+Lines with no path are resolved by scanning `ROOTS` (see below). A fresh checkout
+ships **no** `repos.conf` (it's git-ignored, per-machine state) — the easiest way
+to create yours is to press **`ctrl-e`** in the dashboard and pick from your
+team's repos (see below). To seed it by hand instead, copy the bundled example:
+
+```
+cp repos.conf.example repos.conf   # then edit, or run the ctrl-e picker
+```
+
+Format (`repos.conf.example`):
+
+```
+vippsas/ongoing-due-diligence	/Users/you/Development/Rider/ongoing-due-diligence
+vippsas/pling-backend
+```
+
+### Behaviour — `config.sh`
+
+First run seeds a config at `$(herdr plugin config-dir herdr-prs)/config.sh`. Edit
+that copy:
+
+| Setting     | Meaning                                                        |
+| ----------- | ------------------------------------------------------------- |
+| `REPOS_FILE`| Path to the repo list (default: `repos.conf` beside the plugin).|
+| `ROOTS`     | Directories scanned to resolve a repo with no explicit path.  |
+| `INTERVAL`  | Auto-refresh cadence in seconds (default `30`). Also the CI re-fetch floor: a pipeline glyph can only flip colour once the CI cache is this old. Lower = snappier but more `gh` load (`statusCheckRollup` cost scales with your open-PR count). The watcher's own `/notifications` poll is separately clamped to ≥ 60s regardless. |
+| `PRS_CI`    | `1` (default) shows the CI pipeline glyph, loaded lazily in the background (a dim `·` placeholder until it lands). `0` drops it (always `·`). |
+| `PRS_REVIEW`| `1` (default) shows the review-decision label. `0` drops it (rows show `—`). Unlike CI this is fetched inline, so it can slow the first paint on busy repos. |
+| `PRS_DETAIL`| `1` (default) shows the dim, non-selectable info line under each PR (`branch · +adds/-dels · updated`; adds green, dels red, `→ base` only when not `main`). `j`/`k` skip it — it's information only. Built from cheap scalar fields, so it adds **no** extra GraphQL cost over the base fetch. `0` drops the line. |
+| `PRS_RICH`  | Legacy master switch: `1` forces both `PRS_CI` and `PRS_REVIEW` on. Default `0`. |
+| `PRS_FETCH_PARALLEL` | How many repos to query at once (default `8`).       |
+| `PRS_WATCH` | `1` (default) runs a background watcher that polls GitHub `/notifications` and, on a change, toasts new PR comments/reviews and auto-refreshes the CI glyphs — no manual `ctrl-r`. `0` disables it entirely (no poller, no toasts, no `--listen` socket). |
+| `PRS_NOTIFY_REASONS` | Comma-separated notification reasons that raise a toast (default `comment,mention,review_requested,review,state_change,author`). CI activity always triggers a silent refresh; it only toasts if `ci_activity` is listed. |
+| `PRS_NOTIFY_SOUND` | Toast sound: `none`, `done`, or `request` (default `request`). |
+| `PICK_ORG` / `PICK_TEAM` | The `ctrl-e` picker's pool: a team's repos, or (empty team) every repo you can see in the org. |
+| `WS_LABEL`  | Label of the dashboard workspace (default `PRs`).            |
+| `AGENT_CMD` | Command run in the left **agent** pane of the work workspace. |
+| `AGENT_PROMPT_FLAG` | Flag prepended to a prefilled instruction (default `-i`, copilot's "start interactive & auto-run this prompt"). |
+| `PRS_ACTIONS` | The Enter menu: a bash array of `Label<TAB>prompt` entries. First is the clean agent (empty prompt); the rest auto-run their prompt. `{repo}`/`{num}` expand to the PR's owner/repo and number. |
+| `REVIEWER`  | The right pane: `plugin:<id>:<entrypoint>`, `cmd:<line>`, or `shell`. |
+
+## Choosing which repos to monitor
+
+Press **`ctrl-e`** in the dashboard to open the repo picker: it lists every repo
+in `PICK_ORG`/`PICK_TEAM` (owner → write → read), **pre-checks the ones you
+already monitor** (`●`, floated to the top), and writes your selection back to
+`repos.conf`. It's additive — your current repos stay checked unless you remove
+them, and any monitored repo outside the pool is kept.
+
+- `j`/`k` or `↑`/`↓` — move       · `g`/`G` — top/bottom
+- `space` or `tab` — add/remove a repo (moves down, so you can pick many in a row)
+- `ctrl-a`/`ctrl-d` — select all / none
+- `Enter` — save · `Esc` — cancel (leaves `repos.conf` untouched)
+
+Local clone paths are resolved automatically. You can also run it directly with
+`bash pick-repos.sh`, or just hand-edit `repos.conf`.
+
+## Keys
+
+| key           | action                                             |
+| ------------- | -------------------------------------------------- |
+| `j` / `k`     | move down / up (or `↑` / `↓`)                       |
+| `g` / `G`     | jump to top / bottom                               |
+| `ctrl-d`/`ctrl-u` | half-page down / up                            |
+| type text     | filter the list                                    |
+| `enter`       | check out the PR, then pick how to start the agent |
+| `ctrl-e`      | pick which repos to monitor                        |
+| `ctrl-r`      | refresh now                                        |
+| `ctrl-o`      | open the PR on GitHub                              |
+| `esc`         | hide (the dashboard pane stays live)               |
+
+## Test
+
+```sh
+bash test/test.sh          # all
+bash test/test.sh render   # just the row renderer
+```
+
+Pure-logic tests cover the renderer and the ▎ marking; the side-effecting scripts
+(`open-pr.sh`, `action-open.sh`) are dry-run against fake `gh`/`herdr`/`git`.

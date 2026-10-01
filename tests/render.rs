@@ -56,6 +56,85 @@ const SELECTION_BG: ratatui::style::Color = ratatui::style::Color::Rgb(0x58, 0x5
 /// Catppuccin peach — the comment-editor caret block.
 const PEACH: ratatui::style::Color = ratatui::style::Color::Rgb(0xfa, 0xb3, 0x87);
 
+/// The fg colour of the first cell of `needle` where it appears as a contiguous run on a row
+/// within the right-hand navigator (the file list), scanning top to bottom. `None` when the
+/// text isn't present there. File names are ASCII, so a byte offset is a column offset.
+fn fg_in_nav(buffer: &Buffer, needle: &str) -> Option<ratatui::style::Color> {
+    let area = buffer.area;
+    let x0 = area.width * 7 / 10;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in x0..area.width {
+            row.push_str(buffer.cell((x, y)).map_or(" ", |c| c.symbol()));
+        }
+        if let Some(byte) = row.find(needle) {
+            let x = x0 + row[..byte].chars().count() as u16;
+            return buffer.cell((x, y)).map(|c| c.fg);
+        }
+    }
+    None
+}
+
+/// The fg colour of the first cell of `needle` where it appears as a contiguous run on a row
+/// within the left-hand read pane (the diff/file content), scanning top to bottom. `None`
+/// when the text isn't present there.
+fn fg_in_read(buffer: &Buffer, needle: &str) -> Option<ratatui::style::Color> {
+    let area = buffer.area;
+    let x1 = area.width * 7 / 10;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..x1 {
+            row.push_str(buffer.cell((x, y)).map_or(" ", |c| c.symbol()));
+        }
+        if let Some(byte) = row.find(needle) {
+            let x = row[..byte].chars().count() as u16;
+            return buffer.cell((x, y)).map(|c| c.fg);
+        }
+    }
+    None
+}
+
+#[test]
+fn embedded_sql_in_a_csharp_file_renders_coloured_in_the_file_view() {
+    use herdr_reviewr::highlight::Highlighter;
+    use herdr_reviewr::theme;
+
+    // The pling-backend pattern: a raw string holding a query, no marker.
+    let src = "class R\n{\n    const string sql =\n        \"\"\"\n            SELECT CaseId\n            FROM DsaCaseWriteModel\n            WHERE CaseId = @CaseId\n        \"\"\";\n}\n";
+    let r = Repo::init();
+    r.write("Repo.cs", src);
+    r.commit_all("init");
+
+    let mut app = app_on(&r);
+    enter_tab(&mut app, Tab::AllFiles); // the file view shows whole-file content
+    app.select_file(app_first_file_row(&app)).unwrap();
+    let buf = render_buffer(&app);
+
+    // The SQL grammar's keyword colour, taken from a standalone highlight so the assertion
+    // tracks the real theme rather than a hard-coded hue.
+    let sql_kw = {
+        let h = Highlighter::new(theme::resolve(Some("catppuccin")).syntax);
+        let line = &h.highlight("SELECT 1\n", Some("sql"))[0];
+        let c = line.iter().find(|s| s.text == "SELECT").unwrap().color;
+        ratatui::style::Color::Rgb(c.0, c.1, c.2)
+    };
+
+    assert_eq!(
+        fg_in_read(&buf, "SELECT"),
+        Some(sql_kw),
+        "SELECT inside the C# raw string is painted with the SQL grammar colour"
+    );
+}
+
+/// The visible-row index of the first file row in the navigator, for opening it in the read
+/// pane.
+fn app_first_file_row(app: &App) -> usize {
+    app.file_rows
+        .iter()
+        .position(|r| r.file_index().is_some())
+        .expect("the tree holds at least one file row")
+}
+
 /// The right `100-pct`% of every frame row, for pane-scoped assertions — one home for
 /// the column math, so the two panes' cut points can't drift apart silently.
 fn right_column(out: &str, pct: usize) -> String {
@@ -180,6 +259,124 @@ fn the_file_list_renders_as_a_directory_tree() {
     assert!(files_pane.contains("app.rs") && files_pane.contains("ui.rs"), "files by basename");
     assert!(!files_pane.contains("src/app.rs"), "a grouped file is not shown by full path");
     assert!(files_pane.contains("Cargo.toml"), "the top-level file shows too");
+}
+
+#[test]
+fn a_changed_files_name_takes_its_change_kind_colour() {
+    use ratatui::style::Color;
+    const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+
+    let r = Repo::init();
+    r.write("keep.rs", "one\n");
+    r.commit_all("init");
+    r.write("keep.rs", "one\ntwo\n"); // modified → peach
+    r.write("fresh.rs", "new\n"); // untracked add → green
+    let app = app_on(&r);
+    let buf = render_buffer(&app);
+
+    // Scan the right-hand navigator only, so the diff header (which paints the open file's
+    // path) can't answer for the file-list row.
+    assert_eq!(fg_in_nav(&buf, "keep.rs"), Some(PEACH), "a modified file's name is peach");
+    assert_eq!(fg_in_nav(&buf, "fresh.rs"), Some(GREEN), "an added file's name is green");
+}
+
+#[test]
+fn a_folder_holding_a_change_takes_the_aggregate_change_colour() {
+    use herdr_reviewr::app::Tab;
+    use ratatui::style::Color;
+    const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+
+    let r = Repo::init();
+    r.write("pkg/keep.rs", "one\n"); // an unchanged sibling keeps pkg/ a real (uncollapsed) dir
+    r.commit_all("init");
+    r.write("pkg/fresh.rs", "new\n"); // untracked add under pkg/ → the only change inside it
+    let mut app = app_on(&r);
+    enter_tab(&mut app, Tab::AllFiles); // pkg/ shows collapsed in the content browser
+    let buf = render_buffer(&app);
+
+    // The folder itself carries no change, but it holds an added file, so its name reads
+    // green — the change propagates up to the collapsed parent (specs/file-list.md).
+    assert_eq!(fg_in_nav(&buf, "pkg"), Some(GREEN), "a folder with an added file reads green");
+}
+
+#[test]
+fn a_reviewed_file_greys_out_in_the_navigator() {
+    let r = Repo::init();
+    r.write("keep.rs", "one\n");
+    r.write("other.rs", "one\n");
+    r.commit_all("init");
+    r.write("keep.rs", "one\ntwo\n"); // modified → peach until reviewed
+    r.write("other.rs", "one\ntwo\n"); // modified → stays peach
+    let mut app = app_on(&r);
+
+    // The cursor rests on the first file (keep.rs); mark it reviewed, then move the selection
+    // off it so the row shows its true (unselected) colour rather than the lifted fill.
+    app.toggle_reviewed();
+    app.select_file(1).unwrap();
+    let grey = app.palette().overlay0;
+    let buf = render_buffer(&app);
+
+    assert_eq!(
+        fg_in_nav(&buf, "keep.rs"),
+        Some(grey),
+        "a reviewed file greys out instead of its change colour"
+    );
+    assert_eq!(
+        fg_in_nav(&buf, "other.rs"),
+        Some(PEACH),
+        "an unreviewed changed file keeps its change colour"
+    );
+}
+
+/// The fg colour of the leftmost `▌` change bar on the first read-pane row containing `needle`.
+fn bar_fg_on_row_with(buffer: &Buffer, needle: &str) -> Option<ratatui::style::Color> {
+    let area = buffer.area;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            row.push_str(buffer.cell((x, y)).map_or(" ", ratatui::buffer::Cell::symbol));
+        }
+        if row.contains(needle) {
+            for x in 0..area.width {
+                if buffer.cell((x, y)).map(ratatui::buffer::Cell::symbol) == Some("▌") {
+                    return buffer.cell((x, y)).map(|c| c.fg);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn file_view_change_gutter_marks_added_and_modified_lines() {
+    use herdr_reviewr::app::Tab;
+    use ratatui::style::Color;
+    const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+
+    let r = Repo::init();
+    r.write("code.rs", "fn main() {\n    let keep = 1;\n    let old_val = 2;\n}\n");
+    r.commit_all("init");
+    // Edit one line (modified → peach) and append one line (added → green).
+    r.write(
+        "code.rs",
+        "fn main() {\n    let keep = 1;\n    let new_val = 2;\n    let added = 3;\n}\n",
+    );
+    let mut app = app_on(&r);
+    enter_tab(&mut app, Tab::AllFiles); // the lone top-level file opens in the File view
+    let buf = render_buffer(&app);
+
+    assert_eq!(
+        bar_fg_on_row_with(&buf, "new_val"),
+        Some(PEACH),
+        "the edited line wears a peach change bar in the File view",
+    );
+    assert_eq!(
+        bar_fg_on_row_with(&buf, "added = 3"),
+        Some(GREEN),
+        "the added line wears a green change bar in the File view",
+    );
+    // An unchanged line keeps its blank gutter — no bar glyph on its row.
+    assert_eq!(bar_fg_on_row_with(&buf, "let keep = 1"), None, "an unchanged line has no bar");
 }
 
 #[test]

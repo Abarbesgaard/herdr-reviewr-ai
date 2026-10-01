@@ -29,7 +29,7 @@ Every field is required.
 
 ### Scopes
 
-A scope selects which changes `Changes` shows and which files `All files` annotates. The two tabs share one active scope. A reviewr pane starts in the config's `default_scope`, `uncommitted` when unset (`config.md`). A config reread never switches the active scope.
+A scope selects which changes `Changes` shows and which files `All files` annotates. The two tabs share one active scope. A reviewr pane starts in the config's `default_scope`, `branch` when unset — so a checked-out branch or PR shows everything it carries over its base the moment the pane opens (`config.md`). A config reread never switches the active scope.
 
 | scope         | shows                                                         |
 | ------------- | ------------------------------------------------------------- |

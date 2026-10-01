@@ -1,0 +1,21 @@
+id = "herdr-prod"
+name = "Production Freshness"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "A persistent workspace that shows, for each repo, how long since its last approved production deploy and how many merged PRs / commits are waiting to ship. Pick a repo to list the undeployed merged PRs."
+platforms = ["linux", "macos"]
+
+# Action bound to a keybinding. It focuses the persistent "Prod" dashboard
+# workspace, creating it (and its live list) the first time.
+[[actions]]
+id = "open"
+title = "Open production-freshness dashboard"
+command = ["bash", "action-open.sh"]
+
+# The live freshness list. It runs in the dashboard workspace's pane and
+# self-refreshes; Enter on a row lists that repo's merged-but-undeployed PRs.
+[[panes]]
+id = "dashboard"
+title = "Prod"
+placement = "popup"
+command = ["bash", "dashboard.sh"]

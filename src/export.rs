@@ -183,6 +183,7 @@ mod tests {
 
     fn comment(file: &str, side: Side, start: u32, end: u32, lines: &str, text: &str) -> Comment {
         Comment {
+            id: 0,
             file: file.into(),
             side,
             start,

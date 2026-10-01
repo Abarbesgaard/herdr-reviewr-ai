@@ -1,0 +1,20 @@
+id = "herdr-projects"
+name = "Projects"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Pick a git project and open it as a workspace with an agent pane (left) and a reviewer pane (right)."
+platforms = ["linux", "macos"]
+
+# Action bound to a keybinding (prefix+p). It just opens the picker pane.
+[[actions]]
+id = "open"
+title = "Open project picker"
+command = ["bash", "action-open.sh"]
+
+# The interactive fzf picker. A popup receives all terminal input (incl. Escape)
+# and closes when the command exits.
+[[panes]]
+id = "picker"
+title = "Projects"
+placement = "popup"
+command = ["bash", "projects.sh"]
